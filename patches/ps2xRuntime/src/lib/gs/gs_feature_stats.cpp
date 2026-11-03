@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -80,6 +81,7 @@ namespace
         "frame.psm.CT16",
         "frame.psm.CT16S",
         "frame.psm.other",
+        "z16.z>0xffff",
         "HARD_CASE",
     };
 
@@ -285,6 +287,218 @@ namespace
     {
         return whole ? (100.0 * static_cast<double>(part) / static_cast<double>(whole)) : 0.0;
     }
+
+    uint32_t UsedVertices(const GSPrimitiveBatch &batch)
+    {
+        return std::min<uint32_t>(VerticesForType(batch.state.prim.type), batch.vertexCount);
+    }
+
+    bool IsTriangleType(GSPrimType type)
+    {
+        return type == GS_PRIM_TRIANGLE || type == GS_PRIM_TRISTRIP || type == GS_PRIM_TRIFAN;
+    }
+
+    // Vertex alpha that reaches the blend: the last vertex for flat shading
+    // and sprites (the CPU rasterizer uses v1), the largest one for Gouraud.
+    uint8_t SourceAlphaMax(const GSPrimitiveBatch &batch)
+    {
+        const uint32_t count = UsedVertices(batch);
+        if (count == 0u)
+            return 0u;
+        if (!(batch.state.prim.iip && IsTriangleType(batch.state.prim.type)))
+            return batch.vertices[count - 1u].a;
+        uint8_t alpha = 0u;
+        for (uint32_t i = 0; i < count; ++i)
+            alpha = std::max(alpha, batch.vertices[i].a);
+        return alpha;
+    }
+
+    double MaxVertexZ(const GSPrimitiveBatch &batch)
+    {
+        double z = 0.0;
+        for (uint32_t i = 0, count = UsedVertices(batch); i < count; ++i)
+            z = std::max(z, batch.vertices[i].z);
+        return z;
+    }
+
+    // Blend histogram key: ALPHA selectors A,B,C,D (bits 0-7), FIX class
+    // (bits 8-10), As class (bits 11-12), PABE (bit 13), map (bits 14-15).
+    enum FixClass : uint32_t { FixNa, FixZero, FixBelow80, Fix80, FixAbove80 };
+    enum AsClass : uint32_t { AsNa, AsUpTo80, AsAbove80, AsTexture };
+
+    struct BlendSel
+    {
+        uint32_t a, b, c, d, fix;
+    };
+
+    BlendSel DecodeAlpha(uint64_t alpha)
+    {
+        return {static_cast<uint32_t>(alpha & 3u), static_cast<uint32_t>((alpha >> 2) & 3u),
+                static_cast<uint32_t>((alpha >> 4) & 3u), static_cast<uint32_t>((alpha >> 6) & 3u),
+                static_cast<uint32_t>((alpha >> 32) & 0xFFu)};
+    }
+
+    FixClass ClassifyFix(const BlendSel &sel)
+    {
+        if (sel.c != 2u)
+            return FixNa;
+        if (sel.fix == 0u)
+            return FixZero;
+        return sel.fix < 0x80u ? FixBelow80 : (sel.fix == 0x80u ? Fix80 : FixAbove80);
+    }
+
+    // As comes from the texture when TME=1 and TCC=1 (any TFX); its value is
+    // not known per draw, so it gets its own class.
+    AsClass ClassifyAs(const GSDrawState &state, const BlendSel &sel, uint8_t sourceAlphaMax)
+    {
+        if (sel.c != 0u)
+            return AsNa;
+        if (state.prim.tme && state.context.tex0.tcc != 0u)
+            return AsTexture;
+        return sourceAlphaMax > 0x80u ? AsAbove80 : AsUpTo80;
+    }
+
+    uint32_t BlendKey(const GSDrawState &state, uint8_t sourceAlphaMax)
+    {
+        const BlendSel sel = DecodeAlpha(state.context.alpha);
+        const uint32_t map = GSGpuDrawPolicyProto::MapBlend(state, sourceAlphaMax);
+        return sel.a | (sel.b << 2) | (sel.c << 4) | (sel.d << 6) | (ClassifyFix(sel) << 8) |
+               (ClassifyAs(state, sel, sourceAlphaMax) << 11) | ((state.pabe ? 1u : 0u) << 13) |
+               (map << 14);
+    }
+
+    std::string DescribeBlendKey(uint32_t key)
+    {
+        static constexpr const char *kAbd[4] = {"Cs", "Cd", "0", "?"};
+        static constexpr const char *kC[4] = {"As", "Ad", "FIX", "?"};
+        static constexpr const char *kFix[5] = {"", " FIX=0", " FIX<80", " FIX=80", " FIX>80"};
+        static constexpr const char *kAs[4] = {"", " As<=80", " As>80", " As=tex"};
+        std::string text = "(";
+        text += kAbd[key & 3u];
+        text += "-";
+        text += kAbd[(key >> 2) & 3u];
+        text += ")*";
+        text += kC[(key >> 4) & 3u];
+        text += "+";
+        text += kAbd[(key >> 6) & 3u];
+        text += kFix[std::min<uint32_t>((key >> 8) & 7u, 4u)];
+        text += kAs[(key >> 11) & 3u];
+        if ((key >> 13) & 1u)
+            text += " pabe";
+        return text;
+    }
+
+    constexpr const char *kBlendMapNames[3] = {"fixed", "fixed*", "shader"};
+    constexpr const char *kPhaseNames[GSGpuDrawPolicyProto::kPhaseCount] = {
+        "E2 sprite notex+blend+Z16S", "E3 +tri/gouraud/fog/atst", "E4 +tex CT32/24/16",
+        "E5 +CLUT T8/T4", "E6 +render-to-texture", "rest (CPU through E6)"};
+
+    bool FrameMaskWholeBytes(uint32_t fbmsk)
+    {
+        for (uint32_t shift = 0; shift < 32u; shift += 8u)
+        {
+            const uint32_t byte = (fbmsk >> shift) & 0xFFu;
+            if (byte != 0u && byte != 0xFFu)
+                return false;
+        }
+        return true;
+    }
+}
+
+// Mapping rule. The GS computes ((A-B)*C >> 7) + D, clamped (the CPU reference
+// always clamps). Expanded, the result is s*Cs + d*Cd with s, d of the form
+// k1 + kf*f, f = C/128, k1 in {0,1}, kf in {-1,0,1}. A fixed GPU blend can do
+// src*Cs (+|-|reverse-) dst*Cd with factors {0, 1, f, 1-f} in [0,1]: f comes
+// from SRC1_ALPHA (dual-source, As) or BLEND_FACTOR (FIX). So it is "fixed"
+// unless a coefficient is 1+f, or f is used and f > 1 (As/FIX > 0x80) or
+// C = Ad (the GPU reads Ad/255, the GS uses Ad/128 up to ~2.0), or PABE is on.
+// GPU float math vs. the GS integer >>7 may differ by 1 per channel.
+GSGpuDrawPolicyProto::BlendMap GSGpuDrawPolicyProto::MapBlend(const GSDrawState &state,
+                                                             uint8_t sourceAlphaMax)
+{
+    if (!state.prim.abe)
+        return BlendFixed;
+    if (state.pabe)
+        return BlendShader;
+
+    const BlendSel sel = DecodeAlpha(state.context.alpha);
+    if (sel.a == 3u || sel.b == 3u || sel.d == 3u || sel.c == 3u)
+        return BlendShader; // reserved selector values
+    const int kfSrc = (sel.a == 0u) - (sel.b == 0u), k1Src = sel.d == 0u;
+    const int kfDst = (sel.a == 1u) - (sel.b == 1u), k1Dst = sel.d == 1u;
+    if ((k1Src == 1 && kfSrc == 1) || (k1Dst == 1 && kfDst == 1))
+        return BlendShader; // (1+f): factor above 1.0
+    if (kfSrc == 0 && kfDst == 0)
+        return BlendFixed; // A == B: result is D, C irrelevant
+
+    switch (sel.c)
+    {
+    case 0u: // As
+        if (state.prim.tme && state.context.tex0.tcc != 0u)
+            return BlendFixedIfTexAlpha;
+        return sourceAlphaMax <= 0x80u ? BlendFixed : BlendShader;
+    case 2u: // FIX
+        return sel.fix <= 0x80u ? BlendFixed : BlendShader;
+    default: // Ad
+        return BlendShader;
+    }
+}
+
+// Requirements follow the table in section 3 of the design. Texture alpha in
+// a blend is assumed <= 0x80 (BlendFixedIfTexAlpha counts as GPU): optimistic.
+GSGpuDrawPolicyProto::Phase GSGpuDrawPolicyProto::FirstGpuPhase(const GSDrawState &state,
+                                                               const DrawFacts &facts)
+{
+    const auto &ctx = state.context;
+    Phase phase = E2;
+    const auto need = [&phase](Phase p)
+    { phase = std::max(phase, p); };
+
+    if (IsTriangleType(state.prim.type))
+        need(E3);
+    else if (state.prim.type != GS_PRIM_SPRITE)
+        return CpuOnly; // points and lines
+
+    if (state.prim.fge)
+        need(E3);
+
+    const uint64_t test = ctx.test;
+    const bool alphaTest = (test & 1u) != 0u && ((test >> 1) & 7u) != 1u;
+    if (alphaTest)
+    {
+        if (((test >> 12) & 3u) != 0u)
+            return CpuOnly; // AFAIL != KEEP: two passes (E7)
+        need(E3);
+    }
+    if (((test >> 14) & 1u) != 0u)
+        return CpuOnly; // DATE (E7)
+
+    if (ctx.frame.psm != GS_PSM_CT32 && ctx.frame.psm != GS_PSM_CT24)
+        return CpuOnly;
+    if (!FrameMaskWholeBytes(ctx.frame.fbmsk))
+        return CpuOnly;
+
+    if (DepthUsed(test, ctx.zbuf.zmask) && (ctx.zbuf.psm != GS_PSM_Z16S || facts.z16Overflow))
+        return CpuOnly; // Z32/Z24/Z16, or z beyond 16 bits into Z16S
+
+    if (MapBlend(state, facts.sourceAlphaMax) == BlendShader)
+        return CpuOnly;
+
+    if (state.prim.tme)
+    {
+        const uint8_t psm = ctx.tex0.psm;
+        if (psm == GS_PSM_CT32 || psm == GS_PSM_CT24 || psm == GS_PSM_CT16 || psm == GS_PSM_CT16S)
+            need(E4);
+        else if (IsIndexedPsm(psm))
+            need(E5);
+        else
+            return CpuOnly; // depth formats used as texture
+        if (FilterFeature(ctx.tex1) == GSFeatureStats::FilterMipmap || facts.shuffleLike)
+            return CpuOnly;
+        if (facts.renderToTexture)
+            need(E6);
+    }
+    return phase;
 }
 
 bool GSFeatureStats::Counters::Empty() const
@@ -315,6 +529,21 @@ GSFeatureStats::Counters GSFeatureStats::Counters::operator-(const Counters &bas
     out.localToHostReads -= base.localToHostReads;
     out.localToHostBytes -= base.localToHostBytes;
     out.presents -= base.presents;
+    for (const auto &[key, bin] : base.blend)
+    {
+        const auto it = out.blend.find(key);
+        if (it == out.blend.end())
+            continue;
+        it->second.draws -= bin.draws;
+        it->second.pixels -= bin.pixels;
+        if (it->second.draws == 0u)
+            out.blend.erase(it);
+    }
+    for (size_t i = 0; i < out.phases.size(); ++i)
+    {
+        out.phases[i].draws -= base.phases[i].draws;
+        out.phases[i].pixels -= base.phases[i].pixels;
+    }
     return out;
 }
 
@@ -338,6 +567,31 @@ void GSFeatureStats::OnDraw(const GSPrimitiveBatch &batch)
     {
         ++m_total.featureDraws[features[i]];
         m_total.featurePixels[features[i]] += pixels;
+    }
+    RecordPolicy(batch, features, n, pixels);
+}
+
+void GSFeatureStats::RecordPolicy(const GSPrimitiveBatch &batch, const FeatureList &features,
+                                  uint32_t n, uint64_t pixels)
+{
+    const auto has = [&](Feature f)
+    { return std::find(features.begin(), features.begin() + n, f) != features.begin() + n; };
+
+    GSGpuDrawPolicyProto::DrawFacts facts;
+    facts.sourceAlphaMax = SourceAlphaMax(batch);
+    facts.z16Overflow = has(Z16Overflow);
+    facts.renderToTexture = has(TexRenderTarget);
+    facts.shuffleLike = has(TexShuffleLike);
+
+    Bin &phase = m_total.phases[GSGpuDrawPolicyProto::FirstGpuPhase(batch.state, facts)];
+    ++phase.draws;
+    phase.pixels += pixels;
+
+    if (batch.state.prim.abe)
+    {
+        Bin &bin = m_total.blend[BlendKey(batch.state, facts.sourceAlphaMax)];
+        ++bin.draws;
+        bin.pixels += pixels;
     }
 }
 
@@ -377,6 +631,8 @@ uint32_t GSFeatureStats::Classify(const GSPrimitiveBatch &batch, FeatureList &ou
     const bool depthLowPrecision = depthUsed && ctx.zbuf.psm != GS_PSM_Z32;
     if (depthUsed)
         out[n++] = ZPsmFeature(ctx.zbuf.psm);
+    if (depthUsed && IsSixteenBitPsm(ctx.zbuf.psm) && MaxVertexZ(batch) > 65535.0)
+        out[n++] = Z16Overflow;
 
     const bool date = ((test >> 14) & 1u) != 0u;
     if (date)
@@ -604,5 +860,94 @@ void GSFeatureStats::Print(const Counters &c, const char *title)
         "(render_to_texture | clut.reloaded | blend.other | date | afail!=keep | z16/24 | shuffle_like)\n",
         Percent(c.featureDraws[HardCase], c.draws), Percent(c.featurePixels[HardCase], c.pixels));
 
+    text += BlendHistogramText(c);
+    text += PhaseCoverageText(c);
     std::cout << text << std::flush;
+}
+
+std::string GSFeatureStats::BlendHistogramText(const Counters &c)
+{
+    std::string text;
+    char line[256];
+    const auto add = [&](const char *fmt, auto... args)
+    {
+        std::snprintf(line, sizeof(line), fmt, args...);
+        text += line;
+    };
+    if (c.blend.empty())
+        return text;
+
+    std::vector<std::pair<uint32_t, Bin>> bins(c.blend.begin(), c.blend.end());
+    std::sort(bins.begin(), bins.end(), [](const auto &l, const auto &r)
+              { return l.second.pixels != r.second.pixels ? l.second.pixels > r.second.pixels
+                                                          : l.second.draws > r.second.draws; });
+
+    std::array<Bin, 3> byMap{};
+    for (const auto &[key, bin] : bins)
+    {
+        Bin &m = byMap[std::min<uint32_t>(key >> 14, 2u)];
+        m.draws += bin.draws;
+        m.pixels += bin.pixels;
+    }
+
+    add("[gs-feat] blend histogram (ABE=1; %%=of all draws; fixed* = fixed if texture alpha <= 0x80):\n");
+    add("[gs-feat]   %-34s %10s %8s %8s  %s\n", "(A-B)*C+D", "draws", "%draws", "%pixels", "map");
+    constexpr size_t kTop = 12u;
+    Bin others{};
+    for (size_t i = 0; i < bins.size(); ++i)
+    {
+        const auto &[key, bin] = bins[i];
+        if (i >= kTop)
+        {
+            others.draws += bin.draws;
+            others.pixels += bin.pixels;
+            continue;
+        }
+        add("[gs-feat]   %-34s %10llu %7.2f%% %7.2f%%  %s\n", DescribeBlendKey(key).c_str(),
+            static_cast<unsigned long long>(bin.draws), Percent(bin.draws, c.draws),
+            Percent(bin.pixels, c.pixels), kBlendMapNames[std::min<uint32_t>(key >> 14, 2u)]);
+    }
+    if (others.draws != 0u)
+        add("[gs-feat]   %-34s %10llu %7.2f%% %7.2f%%\n", "others", static_cast<unsigned long long>(others.draws),
+            Percent(others.draws, c.draws), Percent(others.pixels, c.pixels));
+    add("[gs-feat] blend map:");
+    for (size_t i = 0; i < byMap.size(); ++i)
+        add(" %s=%.2f%%draws/%.2f%%px", kBlendMapNames[i], Percent(byMap[i].draws, c.draws),
+            Percent(byMap[i].pixels, c.pixels));
+    add("\n");
+    return text;
+}
+
+std::string GSFeatureStats::PhaseCoverageText(const Counters &c)
+{
+    std::string text;
+    char line[256];
+    const auto add = [&](const char *fmt, auto... args)
+    {
+        std::snprintf(line, sizeof(line), fmt, args...);
+        text += line;
+    };
+
+    add("[gs-feat] cobertura por fase (prototype policy; cum = draws the GPU would take up to the phase):\n");
+    add("[gs-feat]   %-28s %10s %8s %8s %9s %9s\n", "phase", "draws", "%draws", "%pixels", "cum%draws",
+        "cum%pixels");
+    Bin cumulative{};
+    for (size_t i = 0; i < GSGpuDrawPolicyProto::kPhaseCount; ++i)
+    {
+        const Bin &bin = c.phases[i];
+        if (i == GSGpuDrawPolicyProto::CpuOnly)
+        {
+            add("[gs-feat]   %-28s %10llu %7.2f%% %7.2f%%\n", kPhaseNames[i],
+                static_cast<unsigned long long>(bin.draws), Percent(bin.draws, c.draws),
+                Percent(bin.pixels, c.pixels));
+            continue;
+        }
+        cumulative.draws += bin.draws;
+        cumulative.pixels += bin.pixels;
+        add("[gs-feat]   %-28s %10llu %7.2f%% %7.2f%% %8.2f%% %8.2f%%\n", kPhaseNames[i],
+            static_cast<unsigned long long>(bin.draws), Percent(bin.draws, c.draws),
+            Percent(bin.pixels, c.pixels), Percent(cumulative.draws, c.draws),
+            Percent(cumulative.pixels, c.pixels));
+    }
+    return text;
 }

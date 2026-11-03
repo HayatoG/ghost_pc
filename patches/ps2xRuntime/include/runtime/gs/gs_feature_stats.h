@@ -4,6 +4,53 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
+#include <string>
+
+// Prototype of the per-draw GPU/CPU policy of docs/gs-gpu-step2-design.md
+// (sections 3 and 7), run inside the feature counter to predict how much each
+// roadmap phase would move to the GPU before any shader exists. Pure functions
+// of the draw state plus a few facts the counter already tracks; it does not
+// depend on any GPU backend. The real backend may move it to its own file.
+struct GSGpuDrawPolicyProto
+{
+    // First roadmap phase in which a draw can run on the GPU. CpuOnly = not
+    // before E7 (shader blend, DATE, AFAIL, ...) or never (lines, Z32, ...).
+    enum Phase : uint8_t
+    {
+        E2, // sprites without texture, fixed-function blend, Z16S, FBA, byte FBMSK
+        E3, // + triangles (flat/Gouraud), fog, alpha test with AFAIL=KEEP
+        E4, // + direct textures CT32/CT24/CT16/CT16S, bilinear, wrap/region
+        E5, // + indexed textures T8/T4/T8H/T4HL/T4HH (CLUT)
+        E6, // + render-to-texture (same format)
+        CpuOnly,
+        kPhaseCount
+    };
+
+    enum BlendMap : uint8_t
+    {
+        BlendFixed,            // fixed-function GPU blend (incl. dual-source)
+        BlendFixedIfTexAlpha,  // fixed if the texture alpha stays <= 0x80 (unknown here)
+        BlendShader,           // needs blend in the shader (copy of the destination)
+    };
+
+    // Per-draw facts that do not live in GSDrawState.
+    struct DrawFacts
+    {
+        uint8_t sourceAlphaMax = 0;   // largest vertex alpha reaching the blend
+        bool z16Overflow = false;     // z > 0xFFFF into a 16-bit depth buffer
+        bool renderToTexture = false; // texture reads a recent FRAME/ZBUF
+        bool shuffleLike = false;     // texture/frame PSM reinterpretation
+    };
+
+    static BlendMap MapBlend(const GSDrawState &state, uint8_t sourceAlphaMax);
+    static Phase FirstGpuPhase(const GSDrawState &state, const DrawFacts &facts);
+    // Design's Classify(state, phase): true = GPU, false = CPU fallback.
+    static bool Classify(const GSDrawState &state, const DrawFacts &facts, Phase phase)
+    {
+        return FirstGpuPhase(state, facts) <= phase;
+    }
+};
 
 // Optional per-draw GS feature counter, enabled with PS2X_GS_FEATURES=1.
 // Measures how much of a game's drawing falls into cases that are hard for a
@@ -81,12 +128,19 @@ public:
         FramePsmCT16,
         FramePsmCT16S,
         FramePsmOther,
+        Z16Overflow,
         HardCase,
         kFeatureCount
     };
 
     static constexpr uint32_t kTransferDirections = 4u;
     static constexpr uint32_t kSyncReasons = 5u;
+
+    struct Bin
+    {
+        uint64_t draws = 0;
+        uint64_t pixels = 0;
+    };
 
     struct Counters
     {
@@ -102,6 +156,10 @@ public:
         uint64_t localToHostBytes = 0;
         std::array<uint64_t, kSyncReasons> syncs{};
         uint64_t presents = 0;
+        // ABE=1 draws per exact blend combination (key: see BlendKey in the .cpp).
+        std::map<uint32_t, Bin> blend;
+        // Draws per first GPU phase of GSGpuDrawPolicyProto.
+        std::array<Bin, GSGpuDrawPolicyProto::kPhaseCount> phases{};
 
         bool Empty() const;
         Counters operator-(const Counters &base) const;
@@ -124,6 +182,8 @@ public:
     const Counters &Total() const { return m_total; }
 
     static void Print(const Counters &counters, const char *title);
+    static std::string BlendHistogramText(const Counters &counters);
+    static std::string PhaseCoverageText(const Counters &counters);
 
     static constexpr uint64_t kReportPeriodPresents = 600u;
 
@@ -144,6 +204,9 @@ private:
 
     uint32_t Classify(const GSPrimitiveBatch &batch, FeatureList &out);
     uint32_t ClassifyTexture(const GSPrimitiveBatch &batch, FeatureList &out, uint32_t n);
+    // Blend histogram and phase coverage (GSGpuDrawPolicyProto).
+    void RecordPolicy(const GSPrimitiveBatch &batch, const FeatureList &features, uint32_t n,
+                      uint64_t pixels);
     void RecordTargets(const GSDrawState &state);
     void RecordTarget(uint32_t beginBlock, uint32_t endBlock);
     bool IsRecentTarget(uint32_t block) const;

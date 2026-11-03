@@ -1,8 +1,6 @@
 #include "runtime/gs/gs_gpu_backend.h"
 
 #include <algorithm>
-#include <cctype>
-#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <utility>
@@ -10,22 +8,6 @@
 namespace
 {
     constexpr double kStatsPeriodSeconds = 10.0;
-
-    std::string EnvLower(const char *name)
-    {
-        const char *value = std::getenv(name);
-        std::string out = value ? value : "";
-        std::transform(out.begin(), out.end(), out.begin(),
-                       [](unsigned char c)
-                       { return static_cast<char>(std::tolower(c)); });
-        return out;
-    }
-
-    bool EnvFlag(const char *name)
-    {
-        const std::string value = EnvLower(name);
-        return value == "1" || value == "true" || value == "yes" || value == "on";
-    }
 }
 
 GSGpuBackend::GSGpuBackend(gs_rhi::DeviceConfig config)
@@ -170,28 +152,4 @@ void GSGpuBackend::LogStatsIfDue(Clock::time_point now)
               << " max_ms=" << m_presentMsMax << std::endl;
 }
 
-// ---- Factory ----
-
-std::unique_ptr<GSRasterBackend> CreateGSRasterBackendFromEnv()
-{
-    const std::string choice = EnvLower("PS2X_GS");
-    if (choice == "d3d11")
-    {
-#if defined(_WIN32)
-        gs_rhi::DeviceConfig config{};
-        config.windowTitle = "PS2 GS - D3D11 (stage 1: CPU frame on GPU)";
-        config.vsync = EnvFlag("PS2X_GS_VSYNC");
-        config.debugLayer = EnvFlag("PS2X_GS_DEBUG");
-        config.filter = EnvLower("PS2X_GS_FILTER") == "linear" ? gs_rhi::Filter::Linear : gs_rhi::Filter::Point;
-        std::cout << "[gs-gpu] PS2X_GS=d3d11: GSGpuBackend (draws on CPU, presents through D3D11)" << std::endl;
-        return std::make_unique<GSGpuBackend>(std::move(config));
-#else
-        std::cerr << "[gs-gpu] PS2X_GS=d3d11 is Windows-only; using cpu" << std::endl;
-#endif
-    }
-    else if (!choice.empty() && choice != "cpu")
-    {
-        std::cerr << "[gs-gpu] unknown PS2X_GS=" << choice << "; using cpu" << std::endl;
-    }
-    return std::make_unique<GSCpuBackend>();
-}
+// The PS2X_GS factory lives in gs_backend_factory.cpp (built even without D3D11).

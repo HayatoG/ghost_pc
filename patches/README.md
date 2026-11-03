@@ -21,6 +21,7 @@ O PS2Recomp (GPL-3.0) fica em `third_party/` (fora do git). Nossas mudanças sã
 |---|---|
 | `PS2X_TARGET_FPS` | Limite de apresentação do host. Padrão 60; `0` = ilimitado; ex. `30` |
 | `PS2X_PAD_SCRIPT` | Caminho de um script do pad virtual (formato em `ps2_virtual_pad.h`; exemplo em `../pad_scripts/`) |
+| `PS2X_PAD_CLOCK` | O que o `<frame>` do script conta: `guest` (padrão) = vsyncs emulados (`vsyncTick`, tempo de jogo) ou `host` = quadros apresentados do host (comportamento antigo). Os scripts antigos de `../pad_scripts/` foram escritos para `host`; `bench_menu_guest.txt` é a versão `guest` do benchmark do menu |
 | `PS2X_FPS_LOG` | Caminho de um CSV (`t_s,fps,avg_ms,max_ms,guest_vsync_hz`, uma linha por segundo) |
 | `PS2X_SHOT_DIR` | Pasta dos PNG do comando `shot` do pad virtual (padrão `shots/` no diretório corrente) |
 | `PS2X_MISSING_LOG` | Arquivo onde o runtime acrescenta **cada alvo de desvio sem função gerada** (`0xALVO tipo source=0xORIGEM`, uma vez por alvo). Alimenta `tools/ghidra/CreateFunctionsAt.java` |
@@ -28,6 +29,8 @@ O PS2Recomp (GPL-3.0) fica em `third_party/` (fora do git). Nossas mudanças sã
 | `PS2X_HEARTBEAT` (linhas `[hb-irq]`) | Com o heartbeat ligado, também imprime contadores das interrupções INTC/DMAC (`include/ps2_irq_stats.h`): `registered`, `dispatch`, `masked`, `not_recompiled`, `queued`, máscara habilitada e últimos valores. Distingue "o runtime nunca gera a interrupção" de "causa mascarada" e de "handler sem função gerada" (este último também vai para `PS2X_MISSING_LOG`) |
 | `PS2X_VIDEO_HZ` | Taxa de vblank emulada: `60` (NTSC, padrão) ou `50` (PAL). O launcher define pela região do `game.toml` |
 | `PS2X_GS` | *(integrado ao patch; ver `gs_gpu_integration.txt`)* `cpu` (padrão) ou `d3d11`. Extras: `PS2X_GS_VSYNC=1`, `PS2X_GS_DEBUG=1`, `PS2X_GS_FILTER=linear` |
+
+Com o relógio `guest`, o script avança com o jogo e não com a janela: uma captura cai no mesmo ponto do jogo seja qual for a velocidade do host ou do backend de GS (o script ainda é consultado uma vez por quadro do host, então cada passo vale no primeiro quadro do host cujo vsync é ≥ `<frame>`; o log `[pad] shot … (guest vsync N)` mostra onde caiu).
 
 O resumo (`[perf] frames=… avg_fps=… one_percent_low_fps=… guest_vsync_hz=… realtime_pct=…`) sai no stdout ao encerrar. `realtime_pct` = ritmo do relógio emulado / ritmo esperado; 100% = velocidade real, abaixo disso o código recompilado está mais lento que o EE.
 

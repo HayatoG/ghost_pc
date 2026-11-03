@@ -1,0 +1,8 @@
+# Benchmark do menu de idioma com PS2X_PAD_CLOCK=guest (padrao): quadros = vsyncs do jogo.
+# Mesma captura de regressao do bench_menu.txt (deve ser IGUAL a work/reference/menu_idioma.png).
+# Calibracao: no bench_menu.txt (relogio do host) o shot do quadro 600 caiu, por estimativa
+# integrada dos CSVs de FPS (bench, final_menu, ltcg_menu1/2, final2_menu), entre ~827 e ~954
+# vsyncs, e todas essas capturas tiveram o mesmo MD5; 900 fica no meio dessa janela estatica.
+# TODO: confirmar numa rodada (o log imprime "[pad] shot ... (guest vsync N)") e ajustar se preciso.
+900 shot bench_menu
+960 quit

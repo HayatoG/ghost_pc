@@ -56,6 +56,31 @@ int main()
     const FrameActions at4 = onFrame(4);
     assert(!at4.quit && at4.screenshots.size() == 1 && at4.screenshots[0] == "a" && g_calls.size() == 2);
     assert(onFrame(6).quit);
+
+    // Clock names (PS2X_PAD_CLOCK).
+    Clock clock = Clock::Host;
+    assert(parseClock("guest", clock) && clock == Clock::Guest);
+    assert(parseClock("HOST", clock) && clock == Clock::Host);
+    assert(!parseClock("vsync", clock));
+
+    // Guest clock jumping several frames: without holding, the press is collapsed away...
+    {
+        std::ofstream out(path);
+        out << "10 CROSS\n12 -\n12 shot after\n20 quit\n";
+    }
+    g_calls.clear();
+    assert(loadScript(path, error));
+    const FrameActions jump = onFrame(15);
+    assert(g_calls.size() == 2 && g_calls.back() == 0xFFFF && jump.screenshots.size() == 1);
+    // ...with holdEachPadState the press stays for one poll and the rest follows in order.
+    g_calls.clear();
+    assert(loadScript(path, error));
+    const FrameActions held = onFrame(15, true);
+    assert(g_calls.size() == 1 && g_calls[0] == static_cast<uint16_t>(~ps2_stubs::pad_button::Cross));
+    assert(held.screenshots.empty() && !held.quit);
+    const FrameActions next = onFrame(25, true);
+    assert(g_calls.size() == 2 && g_calls[1] == 0xFFFF);
+    assert(next.screenshots.size() == 1 && next.screenshots[0] == "after" && next.quit);
     std::remove(path);
 
     std::cout << "vpad parser+driver OK\n";

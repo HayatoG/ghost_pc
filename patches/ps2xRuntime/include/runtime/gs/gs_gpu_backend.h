@@ -66,6 +66,6 @@ private:
     Clock::time_point m_statsStart{};
 };
 
-// Builds the raster backend chosen by PS2X_GS: "cpu" (default, also on unknown values) or
-// "d3d11". Optional: PS2X_GS_VSYNC=1, PS2X_GS_DEBUG=1 (D3D11 debug layer), PS2X_GS_FILTER=linear.
-std::unique_ptr<GSRasterBackend> CreateGSRasterBackendFromEnv();
+// CreateGSRasterBackendFromEnv() (PS2X_GS=cpu|cpu-thread|d3d11) is declared here for existing
+// includes; it is defined in gs_backend_factory.cpp.
+#include "runtime/gs/gs_backend_factory.h"

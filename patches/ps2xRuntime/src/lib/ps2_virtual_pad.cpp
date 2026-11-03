@@ -3,7 +3,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <fstream>
+#include <iostream>
 #include <mutex>
 #include <sstream>
 #include <string_view>
@@ -211,13 +213,63 @@ namespace ps2_virtual_pad
         return s.loaded;
     }
 
-    FrameActions onFrame(uint64_t frame)
+    bool parseClock(const std::string &text, Clock &clock)
+    {
+        const std::string name = upper(text);
+        if (name == "GUEST")
+        {
+            clock = Clock::Guest;
+            return true;
+        }
+        if (name == "HOST")
+        {
+            clock = Clock::Host;
+            return true;
+        }
+        return false;
+    }
+
+    Clock clockFromEnv()
+    {
+        static const Clock clock = []()
+        {
+            const char *value = std::getenv("PS2X_PAD_CLOCK");
+            Clock parsed = Clock::Guest;
+            if (value != nullptr && *value != '\0' && !parseClock(value, parsed))
+            {
+                std::cerr << "[pad] ignoring invalid PS2X_PAD_CLOCK='" << value << "' (guest|host), using guest"
+                          << std::endl;
+                parsed = Clock::Guest;
+            }
+            return parsed;
+        }();
+        return clock;
+    }
+
+    const char *clockName(Clock clock)
+    {
+        return clock == Clock::Host ? "host" : "guest";
+    }
+
+    FrameActions onFrame(uint64_t frame, bool holdEachPadState)
     {
         ScriptState &s = state();
         std::lock_guard<std::mutex> lock(s.mutex);
         FrameActions actions;
+        bool padApplied = false;
+        uint64_t padFrame = 0;
         while (s.next < s.steps.size() && s.steps[s.next].frame <= frame)
         {
+            const Step &due = s.steps[s.next];
+            if (holdEachPadState && padApplied && due.kind == StepKind::Pad && due.frame != padFrame)
+            {
+                break; // keep the state applied by this call visible until the next poll
+            }
+            if (due.kind == StepKind::Pad)
+            {
+                padApplied = true;
+                padFrame = due.frame;
+            }
             const Step &step = s.steps[s.next++];
             switch (step.kind)
             {

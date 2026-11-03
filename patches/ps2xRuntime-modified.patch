@@ -299,7 +299,7 @@ index f247ff9..ddea578 100644
      {
          uint64_t deadlineCycle = 0;
 diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
-index 45cb9d2..4e3d065 100644
+index 45cb9d2..77a68e7 100644
 --- a/ps2xRuntime/src/lib/ps2_runtime.cpp
 +++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
 @@ -9,9 +9,15 @@
@@ -379,7 +379,7 @@ index 45cb9d2..4e3d065 100644
  struct ElfHeader
  {
      uint32_t magic;
-@@ -736,7 +787,25 @@ bool PS2Runtime::initialize(const char *title)
+@@ -736,7 +787,26 @@ bool PS2Runtime::initialize(const char *title)
          InitAudioDevice();
          m_audioBackend.setAudioReady(IsAudioDeviceReady());
  #endif
@@ -395,7 +395,8 @@ index 45cb9d2..4e3d065 100644
 +            std::string error;
 +            if (ps2_virtual_pad::loadScript(padScript, error))
 +            {
-+                std::cout << "[pad] virtual pad script loaded: " << padScript << std::endl;
++                std::cout << "[pad] virtual pad script loaded: " << padScript << " (clock="
++                          << ps2_virtual_pad::clockName(ps2_virtual_pad::clockFromEnv()) << ")" << std::endl;
 +            }
 +            else
 +            {
@@ -406,7 +407,7 @@ index 45cb9d2..4e3d065 100644
          if (m_debugUiInitCallback)
          {
              m_debugUiInitCallback(*this, m_debugUiUserData);
-@@ -1191,6 +1260,7 @@ void PS2Runtime::reportMissingFunction(uint8_t *rdram,
+@@ -1191,6 +1261,7 @@ void PS2Runtime::reportMissingFunction(uint8_t *rdram,
                                         GuestBranchKind kind,
                                         const char *debugName)
  {
@@ -414,7 +415,7 @@ index 45cb9d2..4e3d065 100644
      const MissingFunctionPolicy policy = missingFunctionPolicy();
      const bool firstReport = !m_missingFunctionReported.exchange(true, std::memory_order_acq_rel);
  
-@@ -2385,7 +2455,43 @@ void PS2Runtime::run()
+@@ -2385,7 +2456,43 @@ void PS2Runtime::run()
          }
          gameThreadFinished.store(true, std::memory_order_release); });
  
@@ -458,7 +459,7 @@ index 45cb9d2..4e3d065 100644
      while (!isStopRequested() && !gameThreadFinished.load(std::memory_order_acquire))
      {
          PS2_IF_AGRESSIVE_LOGS({
-@@ -2446,6 +2552,88 @@ void PS2Runtime::run()
+@@ -2446,6 +2553,95 @@ void PS2Runtime::run()
          }
          EndDrawing();
  
@@ -531,14 +532,21 @@ index 45cb9d2..4e3d065 100644
 +        }
 +        if (ps2_virtual_pad::isLoaded())
 +        {
-+            const ps2_virtual_pad::FrameActions actions = ps2_virtual_pad::onFrame(hostFrame);
++            // PS2X_PAD_CLOCK: script frames are guest vsyncs (default) or presented host frames.
++            const bool guestClock = ps2_virtual_pad::clockFromEnv() == ps2_virtual_pad::Clock::Guest;
++            const uint64_t guestVsync = m_memory.gs().vsyncTick.load(std::memory_order_acquire);
++            const ps2_virtual_pad::FrameActions actions =
++                ps2_virtual_pad::onFrame(guestClock ? guestVsync : hostFrame, guestClock);
 +            for (const std::string &shotName : actions.screenshots)
 +            {
 +                saveGuestFrame(frameTex, presentWidth, presentHeight, shotDir, shotName);
++                std::cout << "[pad] shot " << shotName << " at host frame " << hostFrame << " (guest vsync "
++                          << guestVsync << ")" << std::endl;
 +            }
 +            if (actions.quit)
 +            {
-+                std::cout << "[pad] virtual pad script requested quit at host frame " << hostFrame << std::endl;
++                std::cout << "[pad] virtual pad script requested quit at host frame " << hostFrame
++                          << " (guest vsync " << guestVsync << ")" << std::endl;
 +                requestStop();
 +                break;
 +            }
@@ -547,7 +555,7 @@ index 45cb9d2..4e3d065 100644
          if (WindowShouldClose())
          {
              RUNTIME_LOG("[run] window close requested, breaking out of loop");
-@@ -2454,6 +2642,8 @@ void PS2Runtime::run()
+@@ -2454,6 +2650,8 @@ void PS2Runtime::run()
          }
      }
  
@@ -557,7 +565,7 @@ index 45cb9d2..4e3d065 100644
      if (gameThread.joinable())
      {
 diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
-index 589d768..de2e86c 100644
+index 589d768..578936c 100644
 --- a/ps2xRuntime/CMakeLists.txt
 +++ b/ps2xRuntime/CMakeLists.txt
 @@ -9,7 +9,7 @@ option(PS2X_ENABLE_RUNNER_UNITY_BUILD "Build ps2EntryRunner with CMake unity bui
@@ -569,11 +577,13 @@ index 589d768..de2e86c 100644
  option(PS2X_ENABLE_RUNTIME_LOGS "Enable PS2 runtime logs" ON)
  option(PS2X_ENABLE_AGRESSIVE_LOGS "Enable very verbose/agressive PS2 runtime logs" ON)
  option(PS2X_ENABLE_IOP_RPC_TRACE "Log unhandled IOP/SIF RPC trace suggestions" ON)
-@@ -383,9 +383,13 @@ add_library(ps2_runtime STATIC
+@@ -383,9 +383,15 @@ add_library(ps2_runtime STATIC
      src/lib/gs/ps2_gs_memory.cpp
      src/lib/gs/gs_frontend.cpp
      src/lib/gs/gs_cpu_backend.cpp
 +    src/lib/gs/gs_feature_stats.cpp
++    src/lib/gs/gs_thread_backend.cpp
++    src/lib/gs/gs_backend_factory.cpp
      src/lib/ps2_iop_host.cpp
      src/lib/ps2_memory.cpp
      src/lib/ps2_pad.cpp
@@ -583,11 +593,11 @@ index 589d768..de2e86c 100644
      src/lib/ps2_rom_device.cpp
      src/lib/ps2_vfs.cpp
      src/lib/ps2_runtime.cpp
-@@ -396,6 +400,19 @@ add_library(ps2_runtime STATIC
+@@ -396,6 +402,19 @@ add_library(ps2_runtime STATIC
      src/lib/games_database.cpp
  )
  
-+# Backend GS por GPU (D3D11, Windows). Escolha em tempo de execucao: PS2X_GS=cpu|d3d11 (padrao cpu).
++# Backend GS por GPU (D3D11, Windows). Escolha em tempo de execucao: PS2X_GS=cpu|cpu-thread|d3d11 (padrao cpu).
 +if(WIN32 AND NOT PS2X_IS_ANDROID AND NOT PS2X_IS_VITA)
 +    option(PS2X_ENABLE_GS_D3D11 "Build the D3D11 GS backend (PS2X_GS=d3d11)" ON)
 +endif()
@@ -603,7 +613,7 @@ index 589d768..de2e86c 100644
  if(PS2X_ENABLE_RUNTIME_LOGS)
      target_compile_definitions(ps2_runtime PUBLIC
          PS2_RUNTIME_LOGS=1
-@@ -462,6 +479,12 @@ else()
+@@ -462,6 +481,12 @@ else()
      )
  endif()
  
@@ -616,7 +626,7 @@ index 589d768..de2e86c 100644
  if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
      set_target_properties(ps2EntryRunner PROPERTIES
          UNITY_BUILD ON
-@@ -469,6 +492,20 @@ if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
+@@ -469,6 +494,20 @@ if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
      )
  endif()
  
@@ -637,7 +647,7 @@ index 589d768..de2e86c 100644
  if(PS2X_ENABLE_RUNNER_PCH)
      set(PS2X_RUNNER_PCH_HEADERS
          "${CMAKE_CURRENT_SOURCE_DIR}/include/ps2_runtime_macros.h"
-@@ -577,6 +614,23 @@ if(MSVC)
+@@ -577,6 +616,23 @@ if(MSVC)
      target_link_options(ps2EntryRunner PRIVATE "/FORCE:MULTIPLE")
  endif()
  
@@ -1821,32 +1831,26 @@ index 1cb1540..3b18417 100644
      };
  }
 diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
-index 9281d5f..bcf125a 100644
+index 9281d5f..d7aff81 100644
 --- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 +++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
-@@ -1,5 +1,8 @@
+@@ -1,5 +1,6 @@
  #include "runtime/gs/gs_frontend.h"
  #include "runtime/gs/gs_cpu_backend.h"
-+#if defined(PS2X_HAS_GS_GPU)
-+#include "runtime/gs/gs_gpu_backend.h"
-+#endif
++#include "runtime/gs/gs_backend_factory.h"
  #include "ps2_log.h"
  #include "runtime/ps2_memory.h"
  #include <atomic>
-@@ -105,8 +108,21 @@ namespace
+@@ -105,8 +106,17 @@ namespace
  }
  
  
 +namespace
 +{
-+    // Escolhe o backend de raster: PS2X_GS=d3d11 (se compilado) ou o de CPU (padrao).
++    // Escolhe o backend de raster: PS2X_GS=cpu (padrao) | cpu-thread | d3d11 (se compilado).
 +    std::unique_ptr<GSRasterBackend> makeRasterBackend()
 +    {
-+#if defined(PS2X_HAS_GS_GPU)
 +        return CreateGSRasterBackendFromEnv();
-+#else
-+        return std::make_unique<GSCpuBackend>();
-+#endif
 +    }
 +}
 +
@@ -1856,7 +1860,7 @@ index 9281d5f..bcf125a 100644
  {
      reset();
  }
-@@ -117,7 +133,7 @@ void GS::init(uint8_t *vram, uint32_t vramSize, GSRegisters *privRegs)
+@@ -117,7 +127,7 @@ void GS::init(uint8_t *vram, uint32_t vramSize, GSRegisters *privRegs)
      m_localMemorySize = vramSize;
      m_privRegs = privRegs;
      if (!m_backend)
