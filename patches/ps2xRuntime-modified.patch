@@ -135,7 +135,7 @@ index c5e31c4..6cbc380 100644
              }
              processEvent(scheduled.event);
 diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
-index 45cb9d2..3c5b4dc 100644
+index 45cb9d2..c97513d 100644
 --- a/ps2xRuntime/src/lib/ps2_runtime.cpp
 +++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
 @@ -12,6 +12,9 @@
@@ -148,15 +148,19 @@ index 45cb9d2..3c5b4dc 100644
  #include "ps2x/iop/iop_subsystem.h"
  
  #include <iostream>
-@@ -19,6 +22,7 @@
+@@ -19,8 +22,11 @@
  #include <fstream>
  #include <algorithm>
  #include <array>
 +#include <cstdlib>
  #include <cstring>
++#include <filesystem>
  #include <limits>
++#include <system_error>
  #include <chrono>
-@@ -49,6 +53,33 @@ static constexpr int HOST_WINDOW_HEIGHT = 544;
+ #include <atomic>
+ #include <thread>
+@@ -49,6 +55,48 @@ static constexpr int HOST_WINDOW_HEIGHT = 544;
  static constexpr int HOST_WINDOW_WIDTH = FB_WIDTH;
  static constexpr int HOST_WINDOW_HEIGHT = DEFAULT_DISPLAY_HEIGHT;
  #endif
@@ -187,10 +191,25 @@ index 45cb9d2..3c5b4dc 100644
 +    const char *value = std::getenv(name);
 +    return value != nullptr ? std::string(value) : std::string();
 +}
++
++// Saves the visible part of the guest frame texture as <dir>/<name>.png (native resolution, no window scaling).
++static void saveGuestFrame(const Texture2D &frame, uint32_t visibleWidth, uint32_t visibleHeight,
++                           const std::string &dir, const std::string &name)
++{
++    std::error_code ec;
++    std::filesystem::create_directories(dir, ec);
++
++    Image image = LoadImageFromTexture(frame);
++    ImageCrop(&image, Rectangle{0.0f, 0.0f, static_cast<float>(visibleWidth), static_cast<float>(visibleHeight)});
++    const std::filesystem::path path = std::filesystem::path(dir) / (name + ".png");
++    const bool ok = ExportImage(image, path.string().c_str());
++    UnloadImage(image);
++    std::cout << "[shot] " << (ok ? "saved " : "FAILED ") << path.string() << std::endl;
++}
  struct ElfHeader
  {
      uint32_t magic;
-@@ -736,7 +767,25 @@ bool PS2Runtime::initialize(const char *title)
+@@ -736,7 +784,25 @@ bool PS2Runtime::initialize(const char *title)
          InitAudioDevice();
          m_audioBackend.setAudioReady(IsAudioDeviceReady());
  #endif
@@ -217,32 +236,103 @@ index 45cb9d2..3c5b4dc 100644
          if (m_debugUiInitCallback)
          {
              m_debugUiInitCallback(*this, m_debugUiUserData);
-@@ -2386,6 +2435,8 @@ void PS2Runtime::run()
+@@ -1184,6 +1250,30 @@ void PS2Runtime::resetMissingFunctionReportOnce()
+     m_missingFunctionReported.store(false, std::memory_order_release);
+ }
+ 
++// PS2X_MISSING_LOG: appends one line per *unique* missing branch target ("0xTARGET kind source=0xSRC").
++// The full diagnostic dump below only covers the first miss, which forces one rebuild per address; this
++// list lets every uncovered function start be fixed in a single pass (see tools/ghidra/CreateFunctionsAt.java).
++static void recordMissingTarget(uint32_t targetPc, uint32_t sourcePc, const char *kindName)
++{
++    static std::mutex mutex;
++    static std::unordered_map<uint32_t, uint64_t> seen;
++    static const std::string path = envString("PS2X_MISSING_LOG");
++
++    std::lock_guard<std::mutex> lock(mutex);
++    const bool isNew = ++seen[targetPc] == 1u;
++    if (!isNew || path.empty())
++    {
++        return;
++    }
++
++    std::ofstream out(path, std::ios::app);
++    if (out)
++    {
++        out << "0x" << std::hex << targetPc << std::dec << ' ' << kindName << " source=0x" << std::hex << sourcePc
++            << std::dec << '\n';
++    }
++}
++
+ void PS2Runtime::reportMissingFunction(uint8_t *rdram,
+                                        R5900Context *ctx,
+                                        uint32_t targetPc,
+@@ -1191,6 +1281,7 @@ void PS2Runtime::reportMissingFunction(uint8_t *rdram,
+                                        GuestBranchKind kind,
+                                        const char *debugName)
+ {
++    recordMissingTarget(targetPc, sourcePc, describeGuestBranchKind(kind));
+     const MissingFunctionPolicy policy = missingFunctionPolicy();
+     const bool firstReport = !m_missingFunctionReported.exchange(true, std::memory_order_acq_rel);
+ 
+@@ -2386,6 +2477,12 @@ void PS2Runtime::run()
          gameThreadFinished.store(true, std::memory_order_release); });
  
      uint64_t tick = 0;
 +    uint64_t hostFrame = 0;
++    constexpr uint64_t kHeartbeatFrames = 60;
++    const bool heartbeatEnabled = !envString("PS2X_HEARTBEAT").empty();
++    const std::string shotDirEnv = envString("PS2X_SHOT_DIR");
++    const std::string shotDir = shotDirEnv.empty() ? std::string("shots") : shotDirEnv;
 +    ps2_perf::FrameStats frameStats(envString("PS2X_FPS_LOG"), ps2_clock::configuredVideoHz());
      while (!isStopRequested() && !gameThreadFinished.load(std::memory_order_acquire))
      {
          PS2_IF_AGRESSIVE_LOGS({
-@@ -2446,6 +2497,15 @@ void PS2Runtime::run()
+@@ -2446,6 +2543,43 @@ void PS2Runtime::run()
          }
          EndDrawing();
  
 +        frameStats.tick(m_memory.gs().vsyncTick.load(std::memory_order_acquire));
 +        ++hostFrame;
-+        if (ps2_virtual_pad::isLoaded() && ps2_virtual_pad::onFrame(hostFrame))
++
++        // PS2X_HEARTBEAT=1: one status line per second of host frames, to see where the guest is (stuck waiting,
++        // drawing, idle) without the per-function trace of the aggressive-logs build.
++        if (heartbeatEnabled && hostFrame % kHeartbeatFrames == 0)
 +        {
-+            std::cout << "[pad] virtual pad script requested quit at host frame " << hostFrame << std::endl;
-+            requestStop();
-+            break;
++            const GSRegisters &gsRegs = m_memory.gs();
++            std::cout << "[hb] frame=" << hostFrame << std::hex
++                      << " pc=0x" << m_debugPc.load(std::memory_order_relaxed)
++                      << " ra=0x" << m_debugRa.load(std::memory_order_relaxed)
++                      << " sp=0x" << m_debugSp.load(std::memory_order_relaxed)
++                      << " dispfb1=0x" << gsRegs.dispfb1
++                      << " display1=0x" << gsRegs.display1 << std::dec
++                      << " vsync=" << gsRegs.vsyncTick.load(std::memory_order_relaxed)
++                      << " dma=" << m_memory.dmaStartCount()
++                      << " gif=" << m_memory.gifCopyCount()
++                      << " gsw=" << m_memory.gsWriteCount()
++                      << " vif=" << m_memory.vifWriteCount()
++                      << " threads=" << m_eeScheduler->snapshot().threads.size()
++                      << std::endl;
++        }
++        if (ps2_virtual_pad::isLoaded())
++        {
++            const ps2_virtual_pad::FrameActions actions = ps2_virtual_pad::onFrame(hostFrame);
++            for (const std::string &shotName : actions.screenshots)
++            {
++                saveGuestFrame(frameTex, presentWidth, presentHeight, shotDir, shotName);
++            }
++            if (actions.quit)
++            {
++                std::cout << "[pad] virtual pad script requested quit at host frame " << hostFrame << std::endl;
++                requestStop();
++                break;
++            }
 +        }
 +
          if (WindowShouldClose())
          {
              RUNTIME_LOG("[run] window close requested, breaking out of loop");
-@@ -2454,6 +2514,7 @@ void PS2Runtime::run()
+@@ -2454,6 +2588,7 @@ void PS2Runtime::run()
          }
      }
  
@@ -251,7 +341,7 @@ index 45cb9d2..3c5b4dc 100644
      if (gameThread.joinable())
      {
 diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
-index 589d768..debf4e0 100644
+index 589d768..e9dde94 100644
 --- a/ps2xRuntime/CMakeLists.txt
 +++ b/ps2xRuntime/CMakeLists.txt
 @@ -9,6 +9,7 @@ option(PS2X_ENABLE_RUNNER_UNITY_BUILD "Build ps2EntryRunner with CMake unity bui
@@ -271,6 +361,44 @@ index 589d768..debf4e0 100644
      src/lib/ps2_rom_device.cpp
      src/lib/ps2_vfs.cpp
      src/lib/ps2_runtime.cpp
+@@ -469,6 +472,20 @@ if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
+     )
+ endif()
+ 
++option(PS2X_BUILD_VPAD_TEST "Build the virtual pad parser/driver test (vpad_test)" OFF)
++if(PS2X_BUILD_VPAD_TEST)
++    add_executable(vpad_test
++        tests/vpad_test.cpp
++        src/lib/ps2_virtual_pad.cpp
++    )
++    target_include_directories(vpad_test PRIVATE
++        "${CMAKE_CURRENT_SOURCE_DIR}/include"
++        "${CMAKE_CURRENT_SOURCE_DIR}/src/lib"
++        "${CMAKE_CURRENT_SOURCE_DIR}/src/lib/Kernel"
++    )
++    target_compile_features(vpad_test PRIVATE cxx_std_20)
++endif()
++
+ if(PS2X_ENABLE_RUNNER_PCH)
+     set(PS2X_RUNNER_PCH_HEADERS
+         "${CMAKE_CURRENT_SOURCE_DIR}/include/ps2_runtime_macros.h"
+@@ -577,6 +594,16 @@ if(MSVC)
+     target_link_options(ps2EntryRunner PRIVATE "/FORCE:MULTIPLE")
+ endif()
+ 
++# Every guest call is a nested native C++ call, so a deep guest call chain needs a deep host stack.
++# The Windows default (1 MB) overflowed (0xC00000FD) in generated code. /STACK sets the reserved size of the
++# main thread and of every thread created with the default size (e.g. std::thread). Only address space is
++# reserved; pages are committed on demand.
++set(PS2X_STACK_RESERVE_MB 256 CACHE STRING "Reserved host stack per thread, in MB (MSVC)")
++if(MSVC)
++    math(EXPR PS2X_STACK_RESERVE_BYTES "${PS2X_STACK_RESERVE_MB} * 1024 * 1024")
++    target_link_options(ps2EntryRunner PRIVATE "/STACK:${PS2X_STACK_RESERVE_BYTES}")
++endif()
++
+ # Vita: Work around for GCC 10's LTO plugin
+ if(PS2X_IS_VITA)
+     target_link_options(ps2EntryRunner PRIVATE "-Wl,--allow-multiple-definition")
 diff --git a/ps2xRuntime/cmake/ReleaseMode.cmake b/ps2xRuntime/cmake/ReleaseMode.cmake
 index 92ef0d5..1578f6f 100644
 --- a/ps2xRuntime/cmake/ReleaseMode.cmake

@@ -9,6 +9,8 @@ O PS2Recomp (GPL-3.0) fica em `third_party/` (fora do git). Nossas mudanças sã
 | `ps2xRuntime/include/ps2_frame_stats.h`, `src/lib/ps2_frame_stats.cpp` | Medidor de FPS (CSV por segundo + resumo com percentis) |
 | `ps2xRuntime/tests/vpad_test.cpp` | Teste isolado do parser do pad virtual |
 
+`CMakeLists.txt` (no `.patch`) também reserva **256 MB de pilha** (`/STACK`, opção `PS2X_STACK_RESERVE_MB`): cada chamada do guest é uma chamada C++ aninhada, e a pilha padrão de 1 MB estourava (`0xC00000FD`) no código gerado.
+
 `Kernel/EeScheduler.cpp` (no `.patch`): o período do vblank deixa de ser fixo em 60 Hz e passa a vir de `PS2X_VIDEO_HZ` (`include/ps2_video_clock.h`, compartilhado com o medidor).
 
 ## Variáveis de ambiente do runtime
@@ -19,6 +21,7 @@ O PS2Recomp (GPL-3.0) fica em `third_party/` (fora do git). Nossas mudanças sã
 | `PS2X_FPS_LOG` | Caminho de um CSV (`t_s,fps,avg_ms,max_ms,guest_vsync_hz`, uma linha por segundo) |
 | `PS2X_SHOT_DIR` | Pasta dos PNG do comando `shot` do pad virtual (padrão `shots/` no diretório corrente) |
 | `PS2X_MISSING_LOG` | Arquivo onde o runtime acrescenta **cada alvo de desvio sem função gerada** (`0xALVO tipo source=0xORIGEM`, uma vez por alvo). Alimenta `tools/ghidra/CreateFunctionsAt.java` |
+| `PS2X_HEARTBEAT` | Qualquer valor: imprime 1 linha por segundo (`[hb] frame= pc= ra= sp= dispfb1= display1= vsync= dma= gif= gsw= vif= threads=`) para ver **onde o jogo está** (preso esperando, desenhando, ocioso) |
 | `PS2X_VIDEO_HZ` | Taxa de vblank emulada: `60` (NTSC, padrão) ou `50` (PAL). O launcher define pela região do `game.toml` |
 
 O resumo (`[perf] frames=… avg_fps=… one_percent_low_fps=… guest_vsync_hz=… realtime_pct=…`) sai no stdout ao encerrar. `realtime_pct` = ritmo do relógio emulado / ritmo esperado; 100% = velocidade real, abaixo disso o código recompilado está mais lento que o EE.

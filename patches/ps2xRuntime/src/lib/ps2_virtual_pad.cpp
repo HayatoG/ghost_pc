@@ -68,6 +68,14 @@ namespace ps2_virtual_pad
             return true;
         }
 
+        // Screenshot names become file names: letters, digits, '_' and '-' only (no path separators).
+        bool isSafeFileName(const std::string &name)
+        {
+            return !name.empty() && name.size() <= 64 &&
+                   std::all_of(name.begin(), name.end(), [](unsigned char c)
+                               { return std::isalnum(c) != 0 || c == '_' || c == '-'; });
+        }
+
         bool parseAnalog(const std::string &token, uint8_t &value)
         {
             int raw = 0;
@@ -120,7 +128,23 @@ namespace ps2_virtual_pad
 
             if (upper(action) == "QUIT")
             {
-                step.quit = true;
+                step.kind = StepKind::Quit;
+            }
+            else if (upper(action) == "SHOT")
+            {
+                step.kind = StepKind::Shot;
+                std::string name;
+                line >> name;
+                if (name.empty())
+                {
+                    name = "frame_" + std::to_string(step.frame);
+                }
+                if (!isSafeFileName(name))
+                {
+                    error = "line " + std::to_string(lineNo) + ": invalid screenshot name '" + name + "'";
+                    return false;
+                }
+                step.shotName = name;
             }
             else
             {
@@ -187,21 +211,27 @@ namespace ps2_virtual_pad
         return s.loaded;
     }
 
-    bool onFrame(uint64_t frame)
+    FrameActions onFrame(uint64_t frame)
     {
         ScriptState &s = state();
         std::lock_guard<std::mutex> lock(s.mutex);
-        bool quit = false;
+        FrameActions actions;
         while (s.next < s.steps.size() && s.steps[s.next].frame <= frame)
         {
             const Step &step = s.steps[s.next++];
-            if (step.quit)
+            switch (step.kind)
             {
-                quit = true;
-                continue;
+            case StepKind::Quit:
+                actions.quit = true;
+                break;
+            case StepKind::Shot:
+                actions.screenshots.push_back(step.shotName);
+                break;
+            case StepKind::Pad:
+                ps2_stubs::setPadOverrideState(step.buttons, step.lx, step.ly, step.rx, step.ry);
+                break;
             }
-            ps2_stubs::setPadOverrideState(step.buttons, step.lx, step.ly, step.rx, step.ry);
         }
-        return quit;
+        return actions;
     }
 }

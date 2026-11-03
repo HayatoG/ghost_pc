@@ -1,0 +1,15 @@
+# Observa o boot com batimento e tenta passar telas de titulo (START e CROSS espa?ados).
+# Quadros apresentados do host (60 = 1 s a 60 FPS).
+120  shot t02s
+600  shot t10s
+900  START
+906  -
+1200 shot t20s
+1500 CROSS
+1506 -
+1800 shot t30s
+2400 START
+2406 -
+3000 shot t50s
+3600 shot t60s
+3660 quit

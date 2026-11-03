@@ -36,6 +36,15 @@ Status em 2026-11-03: **`ps2_recomp.exe` compilado** (`third_party/PS2Recomp/out
 - **Smart App Control** (estado 1 no registro): bloqueia executáveis sem assinatura/reputação (Code Integrity ids 3077/3033). Não respeita exclusões do Defender. O usuário o desligou (estado 0) em 2026-11-03.
 - Magenta = cor de "sem frame" do runtime; é o primeiro indicador visual de que o jogo ainda não desenhou.
 
+### Segunda rodada (2026-11-03): 41.714 funções, boot do IOP e laço no fioInit
+- Recompilador com as 8890 funções do Ghidra: **41.714 funções** no C++ (252 MB), 4541 avisos (só `JR/JALR`). Rebuild ~14 min do zero; relink ~2 min.
+- **Estouro de pilha** (`0xC00000FD`, 4 s após abrir): pilha padrão de 1 MB insuficiente. Corrigido com `/STACK:256 MB` (opção `PS2X_STACK_RESERVE_MB`) — só relink.
+- Depois disso: sem quedas, **zero alvos ausentes** (`PS2X_MISSING_LOG`), 59,9 FPS de host, `realtime_pct` 100%, mas **quadro magenta** (nada desenhado).
+- **IOP**: o runtime carrega os 9 IRX reais na ordem esperada (sio2man, mtapman, padman, cdvdstm, mcman, mcserv, libsd, sdrdrv, ezsound), com as mensagens originais dos módulos.
+- **Batimento** (`PS2X_HEARTBEAT`): `pc=0x2d2d38 ra=0x2d2d6c` constante por 60 s; `dma=0 gif=0 gsw=0`; 1 thread. O PC está em `fioInit` (`0x2d2ca8`), em loop de `sceSifBindRpc(…, 0x80000001)`.
+- **Causa**: o `ps2xIOP` só tem serviços HLE para mcserv, dbcman e libsd; o runtime emula a API de arquivos **por nome** (`fioOpen`, `sceOpen`… no `ps2_call_list.h`), sem RPC. O `sceSifRebootIop` do runtime só reseta o IOP e ignora a imagem `IOPRP280.IMG`. As funções fio do jogo não têm o nome do SDK no Ghidra, então foram recompiladas como código real.
+- **Plano**: mapear sistematicamente os ~700 nomes do `ps2_call_list.h` às funções do jogo (agentes: `symbols_fio.csv`, `symbols_sdk2.csv`), reaplicar com `tools/ghidra/ApplySymbolsCsv.java`, reexportar e repetir o ciclo.
+
 ## Próximos passos
 0. Terminar o build 2; rodar `launcher run` com `--fps 0` para ver se o boot chega a desenhar algo e medir o FPS bruto.
 1. Compilar o C++ gerado (248 MB, 39 mil arquivos: usar unidade única/`single_file_output` ou build paralelo com cuidado de RAM) junto com `ps2xRuntime`.
