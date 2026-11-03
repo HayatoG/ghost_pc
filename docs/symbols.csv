@@ -1,0 +1,169 @@
+address,name,confidence,evidence
+0x00100008,_start,high,"entry: clears regs/.bss, syscall 0x3c SetupThread, 0x3d SetupHeap, calls main then exit"
+0x001943e0,main,high,"called from crt0 with (argc,argv) then result passed to exit"
+0x002a1188,sceDmaSync,medium,string 'libdma: sync timeout' with timeout counter
+0x002a1298,sceDmaReset,medium,resets D_CTRL/D_STAT and all channel regs; called from main init
+0x002a1a78,scePadInit,medium,string 'libpad: Module version mismatch'; RPC bind loop
+0x002a1cd8,scePadPortOpen,high,"strings 'buffer addr is not 64 byte align', 'pad port is already open'"
+0x002a2de0,sceGsResetGraph,high,"writes GS CSR reset 0x200, SetGsCrt syscall, GsPutIMR 0xff00"
+0x002a2f80,sceGsSyncV,medium,waits VBLANK via INTC and returns CSR FIELD bit
+0x002a3018,sceGsSyncPath,high,strings 'sceGsSyncPath: ... does not terminate'
+0x002a6080,sceMpegGetPicture,high,"strings 'sceMpegGetPicture is aborted', 64-byte alignment check"
+0x002ad220,_sceCdCallbackThread,medium,string 'sceCdCbfunc= %d'; WaitSema loop calling callback
+0x002ad720,sceCdSearchFile,high,"string 'Libcdvd bind err CdSearchFile', search name/size/lbn logs"
+0x002ada58,_sceCdNCmd,medium,"strings 'Ncmd fail sema', 'Libcdvd bind err N CMD'"
+0x002add70,_sceCdSCmd,medium,"strings 'Scmd fail sema', 'Libcdvd bind err S cmd'"
+0x002adf90,sceCdInit,high,"strings 'CD_Init', 'Libcdvd Exit'; called before IOP module load"
+0x002ae270,_sceCdDiskReadyOld,medium,string 'OLD DiskReady Call'
+0x002ae468,sceCdDiskReady,medium,string 'NEW DiskReady Call'
+0x002ae6a0,sceCdRead,high,"strings 'call cdread cmd'/'cdread end'; (lsn,sectors,buf,mode)"
+0x002aeaa0,sceCdReadClock,high,strings 'Libcdvd call Clock read'
+0x002aec98,sceCdStRead,high,strings 'sceCdStRead ...'
+0x002aee20,sceCdStPause,high,string 'sceCdStPause call'
+0x002aee70,sceCdStResume,high,string 'sceCdStResume call'
+0x002aeec8,sceCdStStat,high,string 'sceCdStStat call'
+0x002aef10,sceCdStStart,medium,strings 'call cdreadstm'
+0x002af078,sceSdRemoteInit,high,string 'sceSdRemoteInit() RPC bind error!'
+0x002af8e8,sceMcInit,high,"strings 'bind error libmc', 'too old release of mcserv.irx'"
+0x002b0598,sceMcUdCheckNewCard,medium,name from string 'sceMcUdCheckNewCard RPC faild' only
+0x002bc4a0,sceMtapInit,medium,string 'libmtap: Module version mismatch'
+0x002bc6e0,sceMtapPortOpen,high,string 'sceMtapPortOpen: rpc error'
+0x002bc750,sceMtapPortClose,high,string 'sceMtapPortClose: rpc error'
+0x002bc7c0,sceMtapGetConnection,high,string 'sceMtapGetConnection: rpc error'
+0x002bc830,sceMtapChangeThreadPriority,high,string 'sceMtapChangeThreadPriority: rpc error'
+0x002bc8a0,sceMtapGetModVersion,high,string 'sceMtapGetModVersion: rpc error'
+0x002c3668,atof,medium,"strtod(s,NULL)"
+0x002c3680,atoi,medium,"strtol(s,NULL,10)"
+0x002c3778,__getreent,medium,returns _impure_ptr (0x412aa8)
+0x002c3db0,_free_r,medium,"called by free with (reent, ptr)"
+0x002c49a0,malloc,high,"locks reent, calls _malloc_r(_impure_ptr,size)"
+0x002c49f8,free,high,"locks reent, calls _free_r(_impure_ptr,p)"
+0x002c4c98,_malloc_r,high,"newlib mallocr: (n+0x13) alignment, called by malloc and _calloc_r"
+0x002c53c0,memchr,high,"(s,c,n) pxor/pcpyh scan"
+0x002c54a0,memcmp,high,pxor-based block compare then byte compare
+0x002c5534,memcpy,high,"(dst,src,n) 32-byte block copy then bytewise"
+0x002c55e4,memmove,high,backward copy when ranges overlap
+0x002c56e8,memset,high,byte fill with MMI pcpyh/pcpyld bulk path
+0x002c57a8,__malloc_lock,medium,calls GetThreadId; bracketed around malloc/free
+0x002c5828,__malloc_unlock,medium,pair of __malloc_lock
+0x002c5878,_printf_r,high,"(reent,fmt,...) -> _vfprintf_r(reent, reent->_stdout, ...)"
+0x002c58d8,printf,high,uses _impure_ptr->_stdout then vfprintf
+0x002c6338,srand,high,stores seed at _impure_ptr+0xa8
+0x002c6350,rand,high,64-bit LCG multiplier 0x5851f42d4c957f2d
+0x002c6ca4,strcat,high,"finds end of dst then calls strcpy 0x2c70a4, returns dst"
+0x002c6dd0,strchr,medium,"(s,c) returns pointer to first match"
+0x002c6f60,strcmp,high,2-arg lexicographic compare returning int
+0x002c70a4,strcpy,high,word-at-a-time copy until NUL
+0x002c71b8,strlen,high,zero-byte detect (x-0x01..)&~x&0x80.. returns end-start
+0x002c72f0,strncpy,high,copy up to n then zero pad
+0x002c74b0,strrchr,high,keeps last match pointer
+0x002c7500,strstr,high,substring search
+0x002c84a0,strtod,high,"(s,endptr) float parsing, impure_ptr"
+0x002c84f0,strtok,high,state in _impure_ptr+0x5c
+0x002c85d8,_strtol_r,medium,reent version called by strtol
+0x002c8810,strtol,high,"(s,endptr,base) wraps _strtol_r"
+0x002c8840,_strtoul_r,medium,reent version called by strtoul
+0x002c8a70,strtoul,medium,wraps _strtoul_r like strtol
+0x002c8ba0,vfprintf,medium,"(FILE*,fmt,ap) wrapper of _vfprintf_r"
+0x002c8c18,_vfprintf_r,high,"string 'bug in vfprintf: bad base', '(null)', digit tables"
+0x002ce2b8,_calloc_r,high,_malloc_r(n*size) then zero fill
+0x002ce960,SetGsCrt,high,"kernel syscall stub li v1,2 (ps2sdk syscallnr.h)"
+0x002ce980,Exit,high,"kernel syscall stub li v1,4 (ps2sdk syscallnr.h)"
+0x002ce9a0,_LoadExecPS2,high,"kernel syscall stub li v1,6 (ps2sdk syscallnr.h)"
+0x002cea10,SetVTLBRefillHandler,high,"kernel syscall stub li v1,13 (ps2sdk syscallnr.h)"
+0x002cea40,AddIntcHandler,high,"kernel syscall stub li v1,16 (ps2sdk syscallnr.h)"
+0x002cea50,AddIntcHandler2,medium,"kernel syscall stub li v1,16 (ps2sdk syscallnr.h)"
+0x002cea60,RemoveIntcHandler,high,"kernel syscall stub li v1,17 (ps2sdk syscallnr.h)"
+0x002cea70,AddDmacHandler,high,"kernel syscall stub li v1,18 (ps2sdk syscallnr.h)"
+0x002cea80,AddDmacHandler2,medium,"kernel syscall stub li v1,18 (ps2sdk syscallnr.h)"
+0x002cea90,RemoveDmacHandler,high,"kernel syscall stub li v1,19 (ps2sdk syscallnr.h)"
+0x002ceaa0,_EnableIntc,high,"kernel syscall stub li v1,20 (ps2sdk syscallnr.h)"
+0x002ceab0,_DisableIntc,high,"kernel syscall stub li v1,21 (ps2sdk syscallnr.h)"
+0x002ceac0,_EnableDmac,high,"kernel syscall stub li v1,22 (ps2sdk syscallnr.h)"
+0x002cead0,_DisableDmac,high,"kernel syscall stub li v1,23 (ps2sdk syscallnr.h)"
+0x002ceb00,_iEnableIntc,high,"kernel syscall stub li v1,-26 (ps2sdk syscallnr.h)"
+0x002ceb10,_iDisableIntc,high,"kernel syscall stub li v1,-27 (ps2sdk syscallnr.h)"
+0x002ceb20,_iEnableDmac,high,"kernel syscall stub li v1,-28 (ps2sdk syscallnr.h)"
+0x002ceb30,_iDisableDmac,high,"kernel syscall stub li v1,-29 (ps2sdk syscallnr.h)"
+0x002ceb60,CreateThread,high,"kernel syscall stub li v1,32 (ps2sdk syscallnr.h)"
+0x002ceb70,DeleteThread,high,"kernel syscall stub li v1,33 (ps2sdk syscallnr.h)"
+0x002ceb80,StartThread,high,"kernel syscall stub li v1,34 (ps2sdk syscallnr.h)"
+0x002ceba0,ExitDeleteThread,high,"kernel syscall stub li v1,36 (ps2sdk syscallnr.h)"
+0x002cebb0,TerminateThread,high,"kernel syscall stub li v1,37 (ps2sdk syscallnr.h)"
+0x002cebf0,ChangeThreadPriority,high,"kernel syscall stub li v1,41 (ps2sdk syscallnr.h)"
+0x002cec10,RotateThreadReadyQueue,high,"kernel syscall stub li v1,43 (ps2sdk syscallnr.h)"
+0x002cec50,GetThreadId,high,"kernel syscall stub li v1,47 (ps2sdk syscallnr.h)"
+0x002cec60,ReferThreadStatus,high,"kernel syscall stub li v1,48 (ps2sdk syscallnr.h)"
+0x002cec80,SleepThread,high,"kernel syscall stub li v1,50 (ps2sdk syscallnr.h)"
+0x002cec90,WakeupThread,high,"kernel syscall stub li v1,51 (ps2sdk syscallnr.h)"
+0x002ceca0,_iWakeupThread,high,"kernel syscall stub li v1,-0x34 (ps2sdk _iWakeupThread)"
+0x002cecd0,SuspendThread,high,"kernel syscall stub li v1,55 (ps2sdk syscallnr.h)"
+0x002cece0,iSuspendThread,high,"kernel syscall stub li v1,-56 (ps2sdk syscallnr.h)"
+0x002ced40,EndOfHeap,high,"kernel syscall stub li v1,62 (ps2sdk syscallnr.h)"
+0x002ced60,CreateSema,high,"kernel syscall stub li v1,64 (ps2sdk syscallnr.h)"
+0x002ced70,DeleteSema,high,"kernel syscall stub li v1,65 (ps2sdk syscallnr.h)"
+0x002ced80,SignalSema,high,"kernel syscall stub li v1,66 (ps2sdk syscallnr.h)"
+0x002ced90,iSignalSema,high,"kernel syscall stub li v1,-67 (ps2sdk syscallnr.h)"
+0x002ceda0,WaitSema,high,"kernel syscall stub li v1,68 (ps2sdk syscallnr.h)"
+0x002cedb0,PollSema,high,"kernel syscall stub li v1,69 (ps2sdk syscallnr.h)"
+0x002cede0,iReferSemaStatus,high,"kernel syscall stub li v1,-72 (ps2sdk syscallnr.h)"
+0x002cee00,SetOsdConfigParam,high,"kernel syscall stub li v1,74 (ps2sdk syscallnr.h)"
+0x002cee10,GetOsdConfigParam,high,"kernel syscall stub li v1,75 (ps2sdk syscallnr.h)"
+0x002cefe0,FlushCache,high,"kernel syscall stub li v1,100 (ps2sdk syscallnr.h)"
+0x002cf010,iFlushCache,high,"kernel syscall stub li v1,-104 (ps2sdk syscallnr.h)"
+0x002cf030,sceSifStopDma,high,"kernel syscall stub li v1,107 (ps2sdk syscallnr.h)"
+0x002cf070,GetOsdConfigParam2,high,"kernel syscall stub li v1,111 (ps2sdk syscallnr.h)"
+0x002cf0a0,GsPutIMR,high,"kernel syscall stub li v1,113 (ps2sdk syscallnr.h)"
+0x002cf0d0,SetVSyncFlag,high,"kernel syscall stub li v1,115 (ps2sdk syscallnr.h)"
+0x002cf100,sceSifDmaStat,high,"kernel syscall stub li v1,118 (ps2sdk syscallnr.h)"
+0x002cf120,sceSifSetDma,high,"kernel syscall stub li v1,119 (ps2sdk syscallnr.h)"
+0x002cf130,isceSifSetDma,high,"kernel syscall stub li v1,-119 (ps2sdk syscallnr.h)"
+0x002cf140,sceSifSetDChain,high,"kernel syscall stub li v1,120 (ps2sdk syscallnr.h)"
+0x002cf150,isceSifSetDChain,high,"kernel syscall stub li v1,-120 (ps2sdk syscallnr.h)"
+0x002cf160,sceSifSetReg,high,"kernel syscall stub li v1,121 (ps2sdk syscallnr.h)"
+0x002cf170,sceSifGetReg,high,"kernel syscall stub li v1,122 (ps2sdk syscallnr.h)"
+0x002cf180,_ExecOSD,high,"kernel syscall stub li v1,123 (ps2sdk syscallnr.h)"
+0x002cf190,Deci2Call,high,"kernel syscall stub li v1,124 (ps2sdk syscallnr.h)"
+0x002cf1c0,GetMemorySize,high,"kernel syscall stub li v1,127 (ps2sdk syscallnr.h)"
+0x002cf1d0,_InitTLB,high,"kernel syscall stub li v1,130 (ps2sdk syscallnr.h)"
+0x002cf840,DisableIntc,high,wrapper: DIntr + syscall _DisableIntc(0x15) + EIntr
+0x002cf8a8,EnableIntc,high,wrapper: DIntr + syscall _EnableIntc(0x14) + EIntr
+0x002cf910,DisableDmac,high,wrapper around syscall _DisableDmac(0x17)
+0x002cf978,EnableDmac,high,wrapper around syscall _EnableDmac(0x16)
+0x002cf9e0,iEnableIntc,high,wrapper around syscall _iEnableIntc(-0x1a)
+0x002cfa00,iDisableIntc,high,wrapper around syscall _iDisableIntc(-0x1b)
+0x002cfa20,iEnableDmac,high,wrapper around syscall _iEnableDmac(-0x1c)
+0x002cfa40,iDisableDmac,high,wrapper around syscall _iDisableDmac(-0x1d)
+0x002cfc10,iWakeupThread,high,uses syscall -0x2f (_iGetThreadId hack) then _iWakeupThread; matches ps2sdk comment
+0x002cfdc0,DelayThread,medium,string 'DelayThread'; CreateSema + alarm + WaitSema
+0x002cfe88,_DelayThreadAlarmHandler,low,alarm callback calling iSignalSema(arg); used by DelayThread
+0x002d0d18,printf_dbg,low,same formatter 0x2d0720 using current output hook; used for TLB messages
+0x002d0d50,scePrintf,medium,debug printf used by libdma/libcdvd/libpad; forces TTY output hook
+0x002d0e28,sceSifInitCmd,medium,calls sceSifSetReg/GetReg/SetDChain; registers sif cmd buffers
+0x002d11d8,sceSifSendCmd,medium,uses sceSifSetDma/isceSifSetDma to send command packets
+0x002d1588,sceSifInitRpc,medium,registers RPC cmd handlers 0x80000008.. and calls sceSifSetReg
+0x002d1a68,sceSifGetOtherData,medium,"5 args, sends cmd 0x8000000c (RDATA) with optional wait sema"
+0x002d1d20,sceSifBindRpc,medium,CreateSema + sends cmd 0x80000009 (RPC_BIND) and waits
+0x002d1ef0,sceSifCallRpc,medium,"CreateSema + sends RPC_CALL cmd, 9-arg signature"
+0x002d71b0,sceSifRebootIop,medium,string 'm0:UDNL ' + 'too long parameter'
+0x002d72c0,DIntr,high,"mfc0 Status EIE test, di loop, returns previous enable state"
+0x002d7318,EIntr,high,"mfc0 Status EIE test, ei, returns previous state"
+0x002d7388,Copy,high,"kernel syscall stub li v1,90 (ps2sdk syscallnr.h)"
+0x002d7410,FindAddress,high,"kernel syscall stub li v1,131 (ps2sdk syscallnr.h)"
+0x002d7558,SetSyscall,high,"kernel syscall stub li v1,116 (ps2sdk syscallnr.h)"
+0x002d7568,_InitSys,medium,"called by crt0 before main; creates semas/threads, SetSyscall/FindAddress hooks, timers, TLB (guess on exact SCE name)"
+0x002d75c0,SetSyscall_dup1,high,"kernel syscall stub li v1,116 (ps2sdk syscallnr.h)"
+0x002d75d0,Copy_dup1,high,"kernel syscall stub li v1,90 (ps2sdk syscallnr.h)"
+0x002d7618,GetEntryAddress,high,"kernel syscall stub li v1,91 (ps2sdk syscallnr.h)"
+0x002d7740,Copy_dup2,high,"kernel syscall stub li v1,90 (ps2sdk syscallnr.h)"
+0x002d7780,SetSyscall_dup2,high,"kernel syscall stub li v1,116 (ps2sdk syscallnr.h)"
+0x002d7920,LoadExecPS2,medium,wraps syscall _LoadExecPS2 after 0x2d7790/0x2d78a8 cleanup
+0x002d7968,exit,high,crt0 tail-calls with main result; runs 0x2d78a8 then Exit syscall (0x2ce980)
+0x002d79e0,SetSyscall_dup3,high,"kernel syscall stub li v1,116 (ps2sdk syscallnr.h)"
+0x002d79f0,Copy_dup3,high,"kernel syscall stub li v1,90 (ps2sdk syscallnr.h)"
+0x002d7a38,GetEntryAddress_dup1,high,"kernel syscall stub li v1,91 (ps2sdk syscallnr.h)"
+0x002d97f8,Copy_dup4,high,"kernel syscall stub li v1,90 (ps2sdk syscallnr.h)"
+0x002d9840,GetEntryAddress_dup2,high,"kernel syscall stub li v1,91 (ps2sdk syscallnr.h)"
+0x002d9850,SetSyscall_dup4,high,"kernel syscall stub li v1,116 (ps2sdk syscallnr.h)"
+0x002d9948,_SetTLBEntry,high,"kernel syscall stub li v1,86 (ps2sdk syscallnr.h)"
+0x002d9a28,InitTLBEntries,low,strings '# TLB spad=0 kernel=1:%d ...' calls _SetTLBEntry in loop

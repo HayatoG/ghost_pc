@@ -1,0 +1,7 @@
+# Fumaça: observa o boot sem apertar nada, tira prints em momentos diferentes e sai sozinho.
+# Quadros = quadros apresentados do host (a 60 FPS, 60 quadros = 1 s).
+60   shot boot_001s
+300  shot boot_005s
+900  shot boot_015s
+1800 shot boot_030s
+1860 quit

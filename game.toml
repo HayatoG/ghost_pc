@@ -1,0 +1,27 @@
+# Configuração do jogo para o launcher genérico (launcher/ps2launcher.py).
+# Nada aqui é conteúdo do jogo: só identificação e hashes para validar o dump do usuário.
+
+[game]
+name = "Ghost in the Shell: Stand Alone Complex"
+serial = "SLES_530.20"
+region = "PAL"
+
+[dump]
+iso_glob = "*.iso"
+# sha256 do ELF de boot (SLES_530.20) no dump Europe (En,Fr,De,Es,It)
+boot_elf_sha256 = "9ddec62618d6770261ae87cb53eec04552d8f67ba794e3c5e8689b7523e258f7"
+
+[extract]
+# O runtime usa o diretório do ELF como raiz do cdrom0:, então os dados do disco vão junto.
+# Vídeos (MOV00EU/MOV01EU/MOV02EU.BIN, ~2,2 GB) ficam de fora até serem necessários.
+work_dir = "work"
+files = ["SYSTEM.CNF", "SLES_530.20", "MODULES", "IMAGE.BIN", "BGM.BIN", "RTDEN2EU.BIN", "MOV00EUS.BIN"]
+
+[run]
+# Build de performance (LTCG e logs desligados; ver patches/README.md).
+executable = "work/ps2recomp_game/out/build_perf/ps2xRuntime/ps2EntryRunner.exe"
+args = ["{elf}"]
+
+[run.env]
+# Padrões do runtime; sobrescreva por linha de comando (--fps, --pad-script, --fps-log).
+PS2X_TARGET_FPS = "60"

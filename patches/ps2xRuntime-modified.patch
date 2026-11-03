@@ -1,0 +1,328 @@
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/Pad.h b/ps2xRuntime/src/lib/Kernel/Stubs/Pad.h
+index c4de234..bd8c4f7 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/Pad.h
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/Pad.h
+@@ -75,6 +75,27 @@ namespace ps2_stubs
+         PadDebugPortSnapshot ports[kPadDebugPortCount][kPadDebugSlotCount]{};
+     };
+ 
++    // Bit layout of the active-low PS2 button word (shared by the pad stubs and the virtual pad).
++    namespace pad_button
++    {
++        constexpr uint16_t Select = 1u << 0;
++        constexpr uint16_t L3 = 1u << 1;
++        constexpr uint16_t R3 = 1u << 2;
++        constexpr uint16_t Start = 1u << 3;
++        constexpr uint16_t Up = 1u << 4;
++        constexpr uint16_t Right = 1u << 5;
++        constexpr uint16_t Down = 1u << 6;
++        constexpr uint16_t Left = 1u << 7;
++        constexpr uint16_t L2 = 1u << 8;
++        constexpr uint16_t R2 = 1u << 9;
++        constexpr uint16_t L1 = 1u << 10;
++        constexpr uint16_t R1 = 1u << 11;
++        constexpr uint16_t Triangle = 1u << 12;
++        constexpr uint16_t Circle = 1u << 13;
++        constexpr uint16_t Cross = 1u << 14;
++        constexpr uint16_t Square = 1u << 15;
++    }
++
+     PadDebugSnapshot getPadDebugSnapshot();
+     void setPadOverrideState(uint16_t buttons, uint8_t lx, uint8_t ly, uint8_t rx, uint8_t ry);
+     void clearPadOverrideState();
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp
+index b50a4cf..52ddf41 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp
+@@ -16,22 +16,22 @@ namespace ps2_stubs
+         constexpr size_t kPadPortCount = 2;
+         constexpr size_t kPadSlotCount = 1;
+ 
+-        constexpr uint16_t kPadBtnSelect = 1u << 0;
+-        constexpr uint16_t kPadBtnL3 = 1u << 1;
+-        constexpr uint16_t kPadBtnR3 = 1u << 2;
+-        constexpr uint16_t kPadBtnStart = 1u << 3;
+-        constexpr uint16_t kPadBtnUp = 1u << 4;
+-        constexpr uint16_t kPadBtnRight = 1u << 5;
+-        constexpr uint16_t kPadBtnDown = 1u << 6;
+-        constexpr uint16_t kPadBtnLeft = 1u << 7;
+-        constexpr uint16_t kPadBtnL2 = 1u << 8;
+-        constexpr uint16_t kPadBtnR2 = 1u << 9;
+-        constexpr uint16_t kPadBtnL1 = 1u << 10;
+-        constexpr uint16_t kPadBtnR1 = 1u << 11;
+-        constexpr uint16_t kPadBtnTriangle = 1u << 12;
+-        constexpr uint16_t kPadBtnCircle = 1u << 13;
+-        constexpr uint16_t kPadBtnCross = 1u << 14;
+-        constexpr uint16_t kPadBtnSquare = 1u << 15;
++        constexpr uint16_t kPadBtnSelect = pad_button::Select;
++        constexpr uint16_t kPadBtnL3 = pad_button::L3;
++        constexpr uint16_t kPadBtnR3 = pad_button::R3;
++        constexpr uint16_t kPadBtnStart = pad_button::Start;
++        constexpr uint16_t kPadBtnUp = pad_button::Up;
++        constexpr uint16_t kPadBtnRight = pad_button::Right;
++        constexpr uint16_t kPadBtnDown = pad_button::Down;
++        constexpr uint16_t kPadBtnLeft = pad_button::Left;
++        constexpr uint16_t kPadBtnL2 = pad_button::L2;
++        constexpr uint16_t kPadBtnR2 = pad_button::R2;
++        constexpr uint16_t kPadBtnL1 = pad_button::L1;
++        constexpr uint16_t kPadBtnR1 = pad_button::R1;
++        constexpr uint16_t kPadBtnTriangle = pad_button::Triangle;
++        constexpr uint16_t kPadBtnCircle = pad_button::Circle;
++        constexpr uint16_t kPadBtnCross = pad_button::Cross;
++        constexpr uint16_t kPadBtnSquare = pad_button::Square;
+ 
+         struct PadInputState
+         {
+diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+index c5e31c4..6cbc380 100644
+--- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
++++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include "ps2_log.h"
+ #include "ps2_runtime_macros.h"
++#include "ps2_video_clock.h"
+ 
+ #include <algorithm>
+ #include <cassert>
+@@ -31,8 +32,12 @@ namespace
+     constexpr uint32_t WEF_OR = 0x01u;
+     constexpr uint32_t WEF_CLEAR = 0x10u;
+     constexpr uint32_t WEF_CLEAR_ALL = 0x20u;
+-    constexpr auto kVBlankPeriod = std::chrono::microseconds(16667);
+     constexpr auto kVBlankDuration = std::chrono::microseconds(500);
++
++    std::chrono::microseconds vblankPeriod()
++    {
++        return std::chrono::microseconds(1000000 / ps2_clock::configuredVideoHz());
++    }
+     constexpr uint64_t kAlarmTickMicroseconds = 64u;
+     constexpr uint32_t kDebugPublishDispatchInterval = 4096u;
+ 
+@@ -50,7 +55,11 @@ namespace
+         return std::chrono::seconds(wholeSeconds) + std::chrono::nanoseconds(remainingNanoseconds);
+     }
+ 
+-    constexpr uint64_t kVBlankPeriodCycles = microsecondsToEeCycles(16667u);
++    uint64_t vblankPeriodCycles()
++    {
++        return microsecondsToEeCycles(static_cast<uint64_t>(vblankPeriod().count()));
++    }
++
+     constexpr uint64_t kVBlankDurationCycles = microsecondsToEeCycles(500u);
+     constexpr uint64_t kAlarmTickCycles = microsecondsToEeCycles(kAlarmTickMicroseconds);
+ 
+@@ -146,8 +155,8 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
+     main.status = EeThreadStatus::Ready;
+     m_threads.emplace(main.id, std::move(main));
+     m_readyQueues[0].push_back(kMainThreadId);
+-    scheduleEvent(m_eeCycle + kVBlankPeriodCycles,
+-                  std::chrono::steady_clock::now() + kVBlankPeriod,
++    scheduleEvent(m_eeCycle + vblankPeriodCycles(),
++                  std::chrono::steady_clock::now() + vblankPeriod(),
+                   EeEvent{EeEventType::VBlankStart, 0, 0});
+     publishSnapshot();
+ }
+@@ -1850,8 +1859,8 @@ void EeScheduler::processDueDeadlines()
+                 scheduleEvent(scheduled.deadlineCycle + kVBlankDurationCycles,
+                               scheduled.hostDeadline + kVBlankDuration,
+                               EeEvent{EeEventType::VBlankEnd, 0, m_vsyncTick + 1u});
+-                scheduleEvent(scheduled.deadlineCycle + kVBlankPeriodCycles,
+-                              scheduled.hostDeadline + kVBlankPeriod,
++                scheduleEvent(scheduled.deadlineCycle + vblankPeriodCycles(),
++                              scheduled.hostDeadline + vblankPeriod(),
+                               EeEvent{EeEventType::VBlankStart, 0, 0});
+             }
+             processEvent(scheduled.event);
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+index 45cb9d2..3c5b4dc 100644
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -12,6 +12,9 @@
+ #include "Kernel/Stubs/MPEG.h"
+ #include "ps2_host_backend.h"
+ #include "ps2_iop_host.h"
++#include "ps2_frame_stats.h"
++#include "ps2_video_clock.h"
++#include "ps2_virtual_pad.h"
+ #include "ps2x/iop/iop_subsystem.h"
+ 
+ #include <iostream>
+@@ -19,6 +22,7 @@
+ #include <fstream>
+ #include <algorithm>
+ #include <array>
++#include <cstdlib>
+ #include <cstring>
+ #include <limits>
+ #include <chrono>
+@@ -49,6 +53,33 @@ static constexpr int HOST_WINDOW_HEIGHT = 544;
+ static constexpr int HOST_WINDOW_WIDTH = FB_WIDTH;
+ static constexpr int HOST_WINDOW_HEIGHT = DEFAULT_DISPLAY_HEIGHT;
+ #endif
++
++static constexpr int DEFAULT_HOST_TARGET_FPS = 60;
++
++// PS2X_TARGET_FPS: host presentation cap. Unset -> 60, 0 -> unlimited (for benchmarking).
++static int hostTargetFps()
++{
++    const char *value = std::getenv("PS2X_TARGET_FPS");
++    if (value == nullptr || *value == '\0')
++    {
++        return DEFAULT_HOST_TARGET_FPS;
++    }
++
++    char *end = nullptr;
++    const long parsed = std::strtol(value, &end, 10);
++    if (end == value || *end != '\0' || parsed < 0 || parsed > 100000)
++    {
++        std::cerr << "[perf] ignoring invalid PS2X_TARGET_FPS='" << value << "'" << std::endl;
++        return DEFAULT_HOST_TARGET_FPS;
++    }
++    return static_cast<int>(parsed);
++}
++
++static std::string envString(const char *name)
++{
++    const char *value = std::getenv(name);
++    return value != nullptr ? std::string(value) : std::string();
++}
+ struct ElfHeader
+ {
+     uint32_t magic;
+@@ -736,7 +767,25 @@ bool PS2Runtime::initialize(const char *title)
+         InitAudioDevice();
+         m_audioBackend.setAudioReady(IsAudioDeviceReady());
+ #endif
+-        SetTargetFPS(60);
++        const int targetFps = hostTargetFps();
++        SetTargetFPS(targetFps);
++        std::cout << "[perf] host target fps: " << (targetFps == 0 ? std::string("unlimited") : std::to_string(targetFps))
++                  << std::endl;
++
++        const std::string padScript = envString("PS2X_PAD_SCRIPT");
++        if (!padScript.empty())
++        {
++            std::string error;
++            if (ps2_virtual_pad::loadScript(padScript, error))
++            {
++                std::cout << "[pad] virtual pad script loaded: " << padScript << std::endl;
++            }
++            else
++            {
++                std::cerr << "[pad] virtual pad script rejected: " << error << std::endl;
++            }
++        }
++
+         if (m_debugUiInitCallback)
+         {
+             m_debugUiInitCallback(*this, m_debugUiUserData);
+@@ -2386,6 +2435,8 @@ void PS2Runtime::run()
+         gameThreadFinished.store(true, std::memory_order_release); });
+ 
+     uint64_t tick = 0;
++    uint64_t hostFrame = 0;
++    ps2_perf::FrameStats frameStats(envString("PS2X_FPS_LOG"), ps2_clock::configuredVideoHz());
+     while (!isStopRequested() && !gameThreadFinished.load(std::memory_order_acquire))
+     {
+         PS2_IF_AGRESSIVE_LOGS({
+@@ -2446,6 +2497,15 @@ void PS2Runtime::run()
+         }
+         EndDrawing();
+ 
++        frameStats.tick(m_memory.gs().vsyncTick.load(std::memory_order_acquire));
++        ++hostFrame;
++        if (ps2_virtual_pad::isLoaded() && ps2_virtual_pad::onFrame(hostFrame))
++        {
++            std::cout << "[pad] virtual pad script requested quit at host frame " << hostFrame << std::endl;
++            requestStop();
++            break;
++        }
++
+         if (WindowShouldClose())
+         {
+             RUNTIME_LOG("[run] window close requested, breaking out of loop");
+@@ -2454,6 +2514,7 @@ void PS2Runtime::run()
+         }
+     }
+ 
++    frameStats.printSummary();
+     requestStop();
+     if (gameThread.joinable())
+     {
+diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
+index 589d768..debf4e0 100644
+--- a/ps2xRuntime/CMakeLists.txt
++++ b/ps2xRuntime/CMakeLists.txt
+@@ -9,6 +9,7 @@ option(PS2X_ENABLE_RUNNER_UNITY_BUILD "Build ps2EntryRunner with CMake unity bui
+ set(PS2X_RUNNER_UNITY_BUILD_BATCH_SIZE 32 CACHE STRING "Unity build batch size for ps2EntryRunner")
+ option(PS2X_ENABLE_RUNNER_PCH "Precompile the heavy runtime headers for ps2EntryRunner" ON)
+ option(PS2X_ENABLE_SCCACHE "Use sccache as compiler launcher when available" ON)
++option(PS2X_ENABLE_LTCG "Whole-program optimization (/GL + /LTCG, IPO). OFF = fast link for dev/perf iteration" ON)
+ 
+ option(PS2X_ENABLE_RUNTIME_LOGS "Enable PS2 runtime logs" ON)
+ option(PS2X_ENABLE_AGRESSIVE_LOGS "Enable very verbose/agressive PS2 runtime logs" ON)
+@@ -386,6 +387,8 @@ add_library(ps2_runtime STATIC
+     src/lib/ps2_iop_host.cpp
+     src/lib/ps2_memory.cpp
+     src/lib/ps2_pad.cpp
++    src/lib/ps2_frame_stats.cpp
++    src/lib/ps2_virtual_pad.cpp
+     src/lib/ps2_rom_device.cpp
+     src/lib/ps2_vfs.cpp
+     src/lib/ps2_runtime.cpp
+diff --git a/ps2xRuntime/cmake/ReleaseMode.cmake b/ps2xRuntime/cmake/ReleaseMode.cmake
+index 92ef0d5..1578f6f 100644
+--- a/ps2xRuntime/cmake/ReleaseMode.cmake
++++ b/ps2xRuntime/cmake/ReleaseMode.cmake
+@@ -4,13 +4,23 @@ check_ipo_supported(RESULT IPO_SUPPORTED OUTPUT IPO_ERROR)
+ 
+ function(EnableFastReleaseMode TargetName)
+     message("> Enabling optimization for: ${TargetName}")
++
++    # Whole-program optimization moves most of the code generation into the (mostly serial) link step.
++    # PS2X_ENABLE_LTCG=OFF keeps /O2 but compiles in parallel and links quickly (dev/perf iteration builds).
++    set(PS2X_GL_FLAG "")
++    set(PS2X_LTCG_FLAG "")
++    if(PS2X_ENABLE_LTCG)
++        set(PS2X_GL_FLAG /GL)
++        set(PS2X_LTCG_FLAG /LTCG)
++    endif()
++
+     if(MSVC)
+         target_compile_options(${TargetName} PRIVATE
+             $<$<CONFIG:Release>:
+                 /O2 # speed
+                 /Ob2 # inline aggressively
+                 /Oi # intrinsics
+-                /GL # whole program opt
++                ${PS2X_GL_FLAG} # whole program opt
+                 /Gy # function-level linking
+                 /Gw # global data in COMDAT
+                 /GF # string pooling
+@@ -26,7 +36,7 @@ function(EnableFastReleaseMode TargetName)
+         if(TARGET ${TargetName})
+             target_link_options(${TargetName} PRIVATE
+                 $<$<CONFIG:Release>:
+-                    /LTCG # link-time code generation
++                    ${PS2X_LTCG_FLAG} # link-time code generation
+                     /OPT:REF # remove unreferenced
+                     /OPT:ICF # fold identical COMDATs
+                 >
+@@ -34,9 +44,11 @@ function(EnableFastReleaseMode TargetName)
+         endif()
+     endif()
+ 
+-    if(IPO_SUPPORTED)
+-        set_property(TARGET ${TargetName} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+-    else()
+-        message(WARNING "Interprocedural optimization not supported: ${ipo_error}")
++    if(PS2X_ENABLE_LTCG)
++        if(IPO_SUPPORTED)
++            set_property(TARGET ${TargetName} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
++        else()
++            message(WARNING "Interprocedural optimization not supported: ${IPO_ERROR}")
++        endif()
+     endif()
+ endfunction()
+\ No newline at end of file

@@ -1,0 +1,42 @@
+# === ghost_pc: repositorio proprio do jogo ===
+# Nunca versionar o dump nem nada derivado dele (direitos autorais).
+
+# --- Dump e conteudo do jogo ---
+*.iso
+*.bin
+*.img
+*.elf
+*.irx
+*.ico
+*.sdt
+*.pss
+*.pva
+*.sbv
+*.vag
+*.adx
+*.tm2
+*.tim
+*.dat
+*.png
+*.wav
+*.mpg
+*.pss
+
+# --- Extraido, intermediarios e saidas (inclui C++ gerado, projeto Ghidra, arvore de build) ---
+/work/
+/dump/
+/out/
+/build/
+
+# --- Logs e capturas de tela (geradas localmente) ---
+/logs/*
+!/logs/.gitkeep
+
+# --- Python / editores / SO ---
+__pycache__/
+*.pyc
+.venv/
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

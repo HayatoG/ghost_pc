@@ -1,0 +1,15 @@
+# Pad virtual: exemplo de navegação básica (frames = quadros apresentados do host).
+# Uso: PS2X_PAD_SCRIPT=ghost_pc/pad_scripts/boot_to_menu.txt
+# Aperta START algumas vezes para passar telas de título, depois CROSS para confirmar.
+# Ajuste os frames conforme o ritmo real do boot (ver logs/ e o CSV de FPS).
+
+300  START
+306  -
+600  START
+606  -
+900  CROSS
+906  -
+1200 START
+1206 -
+# Sai sozinho para benchmarks repetíveis (frame 3600 = 60 s a 60 FPS).
+3600 quit
