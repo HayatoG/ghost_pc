@@ -24,3 +24,7 @@ O recompilador converte o ELF inteiro e o runtime abre a janela, mas o jogo **ai
 
 ## Licença dos patches
 Os arquivos em `patches/` são derivados do PS2Recomp e seguem a **GPL-3.0**.
+
+## Licença
+
+GPL-3.0 (ver `LICENSE`), pois o runtime e os patches derivam do PS2Recomp. Direitos autorais do jogo ficam com os titulares; nada do jogo é versionado. Detalhes e checklist de publicação em `docs/LEGAL.md`.
