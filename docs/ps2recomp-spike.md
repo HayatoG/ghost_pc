@@ -75,6 +75,11 @@ Status em 2026-11-03: **`ps2_recomp.exe` compilado** (`third_party/PS2Recomp/out
 - **Desempenho por fase** (`explore3_fps.csv`, 192 s, GS já otimizado): boot+menu 26 Hz do jogo (53%); 12–120 s 30–34 Hz (61–68%); **cena hexagonal 22,9 Hz (46% do tempo real), host ~24 FPS** — a mais pesada medida. (Cena parada logo após o idioma: 50 Hz, 52 FPS.)
 - Segunda fase da otimização do GS (agente Opus retomado) mira a cena hexagonal; ver `gs-optimization.md`.
 
+### Fechamento da janela (05:41)
+- **Exploração de 280 s** com o gamepad virtual (`pad_scripts/explore2.txt`): sem nenhum alvo ausente nem queda; GIF 3746, DMA 26 619. Cenas alcançadas: menu de idioma → (CROSS) → **tela de título "GHOST IN THE SHELL — STAND ALONE COMPLEX" com créditos** (`s05`) → **abertura hexagonal** (`s06`–`s09`). O jogo ainda não passou da abertura nesta rodada (o script só pressiona START/CROSS em momentos fixos; o próximo passo é achar a tela "Appuyez sur Start" real e avançar).
+- **Experimento LTCG só no runtime**: sem ganho (ver `gs-optimization.md`, fase 3); revertido.
+- **Pontos em aberto**: (1) GS na abertura hexagonal ~46% do tempo real (`DrawSprite` 54%, `DrawTriangle` 41%); (2) avançar além da abertura com o pad virtual (menu principal, "NOUV. PARTIE"/"CONTINUER"), medir o gameplay; (3) EZSOUND/áudio (SPU2/libsd) ainda não tratados — sem som; (4) vídeos MPEG (`MOV*.BIN`) via FFmpeg do runtime não testados; (5) cartão de memória (`mc0/`) não testado.
+
 ## Próximos passos
 0. Terminar o build 2; rodar `launcher run` com `--fps 0` para ver se o boot chega a desenhar algo e medir o FPS bruto.
 1. Compilar o C++ gerado (248 MB, 39 mil arquivos: usar unidade única/`single_file_output` ou build paralelo com cuidado de RAM) junto com `ps2xRuntime`.
