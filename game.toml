@@ -25,6 +25,11 @@ args = ["{elf}"]
 # Padrões do runtime; sobrescreva por linha de comando (--fps, --pad-script, --fps-log).
 PS2X_TARGET_FPS = "60"
 
+[art]
+# Janela do launcher (ps2launch-gui): ponto da capa local (artwork/capsule_vertical.png, nao
+# versionada) mantido no centro da faixa esquerda, x/y em 0..1.
+focus = [0.35, 0.45]
+
 # Arquivos conhecidos da edicao Europe (nome, tamanho, sha256): gerados por `ps2launch hashes`.
 # Sao so metadados nossos (nenhum byte do jogo). `verify` confere os tamanhos; `verify --deep`, os hashes.
 [[dump.file]]

@@ -40,3 +40,7 @@ __pycache__/
 .idea/
 Thumbs.db
 .DS_Store
+
+# --- Arte local do launcher (gerada/fornecida pelo usuario; nunca versionar) ---
+/artwork/
+/launcher.cfg
