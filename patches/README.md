@@ -8,6 +8,7 @@ O PS2Recomp (GPL-3.0) fica em `third_party/` (fora do git). Nossas mudanças sã
 | `ps2xRuntime/include/ps2_virtual_pad.h`, `src/lib/ps2_virtual_pad.cpp` | Gamepad virtual por script de quadros |
 | `ps2xRuntime/include/ps2_frame_stats.h`, `src/lib/ps2_frame_stats.cpp` | Medidor de FPS (CSV por segundo + resumo com percentis) |
 | `ps2xRuntime/tests/vpad_test.cpp` | Teste isolado do parser do pad virtual |
+| `ps2xRuntime/include/runtime/gs/gs_rhi.h`, `src/lib/gs/gs_rhi_d3d11.cpp`, `include/runtime/gs/gs_gpu_backend.h`, `src/lib/gs/gs_gpu_backend.cpp` | Backend GS por GPU, etapa 1 (RHI D3D11 + `GSGpuBackend` que delega ao `GSCpuBackend` e apresenta pela GPU). **Ainda não ligado ao CMake/`gs_frontend.cpp`**: ver `gs_gpu_integration.txt` e `../../docs/gs-gpu-plan.md` |
 
 `ps2xRuntime/src/lib/ghost_overrides.cpp` (arquivo novo): **overrides por endereço específicos deste jogo** (`SLES_530.20`), aplicados por `PS2_REGISTER_GAME_OVERRIDE`. Ligam funções internas do SDK que não têm HLE (`fioInit`, `fioIoctl`, `_sceCdSCmd`, `_sceCdNCmd`) a handlers genéricos (`ret0`/`ret1`). **Por que aqui e não no TOML do recompilador?** Acrescentar um stub no TOML muda `ps2_recompiled_stubs.h`, que todo arquivo gerado inclui — rebuild completo (~14 min). Um override é um arquivo só (~1 min). Para um novo "muro": uma linha em `kOverrides`.
 
@@ -26,6 +27,7 @@ O PS2Recomp (GPL-3.0) fica em `third_party/` (fora do git). Nossas mudanças sã
 | `PS2X_HEARTBEAT` | Qualquer valor: imprime 1 linha por segundo (`[hb] frame= pc= ra= sp= dispfb1= display1= vsync= dma= gif= gsw= vif= threads=`) para ver **onde o jogo está** (preso esperando, desenhando, ocioso) |
 | `PS2X_HEARTBEAT` (linhas `[hb-irq]`) | Com o heartbeat ligado, também imprime contadores das interrupções INTC/DMAC (`include/ps2_irq_stats.h`): `registered`, `dispatch`, `masked`, `not_recompiled`, `queued`, máscara habilitada e últimos valores. Distingue "o runtime nunca gera a interrupção" de "causa mascarada" e de "handler sem função gerada" (este último também vai para `PS2X_MISSING_LOG`) |
 | `PS2X_VIDEO_HZ` | Taxa de vblank emulada: `60` (NTSC, padrão) ou `50` (PAL). O launcher define pela região do `game.toml` |
+| `PS2X_GS` | *(após integrar `gs_gpu_integration.txt`)* `cpu` (padrão) ou `d3d11`. Extras: `PS2X_GS_VSYNC=1`, `PS2X_GS_DEBUG=1`, `PS2X_GS_FILTER=linear` |
 
 O resumo (`[perf] frames=… avg_fps=… one_percent_low_fps=… guest_vsync_hz=… realtime_pct=…`) sai no stdout ao encerrar. `realtime_pct` = ritmo do relógio emulado / ritmo esperado; 100% = velocidade real, abaixo disso o código recompilado está mais lento que o EE.
 

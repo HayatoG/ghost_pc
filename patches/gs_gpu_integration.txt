@@ -1,0 +1,64 @@
+Integração proposta do GSGpuBackend (etapa 1) — NÃO aplicada, NÃO compilada no runtime ainda.
+Aplicar à mão na árvore de build (work/ps2recomp_game) e depois regenerar o .patch.
+
+Arquivos novos (copiados pelo robocopy do README):
+  ps2xRuntime/include/runtime/gs/gs_rhi.h
+  ps2xRuntime/include/runtime/gs/gs_gpu_backend.h
+  ps2xRuntime/src/lib/gs/gs_rhi_d3d11.cpp
+  ps2xRuntime/src/lib/gs/gs_gpu_backend.cpp
+
+1) ps2xRuntime/CMakeLists.txt — logo depois do add_library(ps2_runtime STATIC ...):
+
+    if(WIN32 AND NOT PS2X_IS_ANDROID AND NOT PS2X_IS_VITA)
+        option(PS2X_ENABLE_GS_D3D11 "Build the D3D11 GS backend (PS2X_GS=d3d11)" ON)
+    endif()
+    if(PS2X_ENABLE_GS_D3D11)
+        target_sources(ps2_runtime PRIVATE
+            src/lib/gs/gs_rhi_d3d11.cpp
+            src/lib/gs/gs_gpu_backend.cpp
+        )
+        target_compile_definitions(ps2_runtime PUBLIC PS2X_HAS_GS_GPU=1)
+        target_link_libraries(ps2_runtime PUBLIC d3d11 dxgi d3dcompiler)
+    endif()
+
+   (gs_rhi_d3d11.cpp também tem #pragma comment(lib, ...) no MSVC; o target_link_libraries
+   deixa explícito para outros compiladores.)
+
+2) ps2xRuntime/src/lib/gs/gs_frontend.cpp — escolher o backend pela variável PS2X_GS:
+
+    #include "runtime/gs/gs_cpu_backend.h"
+   +#if defined(PS2X_HAS_GS_GPU)
+   +#include "runtime/gs/gs_gpu_backend.h"
+   +#endif
+   ...
+   +namespace
+   +{
+   +    std::unique_ptr<GSRasterBackend> makeRasterBackend()
+   +    {
+   +#if defined(PS2X_HAS_GS_GPU)
+   +        return CreateGSRasterBackendFromEnv();
+   +#else
+   +        return std::make_unique<GSCpuBackend>();
+   +#endif
+   +    }
+   +}
+    GS::GS()
+   -    : m_backend(std::make_unique<GSCpuBackend>())
+   +    : m_backend(makeRasterBackend())
+    ...
+    void GS::init(...)
+        if (!m_backend)
+   -        m_backend = std::make_unique<GSCpuBackend>();
+   +        m_backend = makeRasterBackend();
+
+   Custo de build: gs_frontend.cpp e os dois .cpp novos são da lib ps2_runtime (não do PCH do
+   runner) -> build incremental, não o rebuild de ~14 min. CMakeLists muda -> reconfigura.
+
+3) Teste (depois do build):
+     set PS2X_GS=d3d11       (sem a variável: nada muda, backend de CPU)
+     opcional: PS2X_GS_VSYNC=1, PS2X_GS_DEBUG=1, PS2X_GS_FILTER=linear
+   Esperado no stdout: "[gs-gpu] api=d3d11 adapter=..." e a cada 10 s "[gs-gpu] presents=... avg_ms=...".
+   Abre uma SEGUNDA janela (D3D11) ao lado da janela raylib, com a mesma imagem. Fechar a janela
+   D3D11 só desliga a apresentação por GPU; o jogo continua na janela raylib.
+   Regressão: o MD5 do frame do comando "shot" deve ser idêntico com PS2X_GS=cpu e =d3d11
+   (o shot vem do PresentationFrame, que o GSGpuBackend devolve sem alteração).
