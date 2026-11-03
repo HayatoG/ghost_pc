@@ -27,7 +27,7 @@ O PS2Recomp (GPL-3.0) fica em `third_party/` (fora do git). Nossas mudanças sã
 | `PS2X_HEARTBEAT` | Qualquer valor: imprime 1 linha por segundo (`[hb] frame= pc= ra= sp= dispfb1= display1= vsync= dma= gif= gsw= vif= threads=`) para ver **onde o jogo está** (preso esperando, desenhando, ocioso) |
 | `PS2X_HEARTBEAT` (linhas `[hb-irq]`) | Com o heartbeat ligado, também imprime contadores das interrupções INTC/DMAC (`include/ps2_irq_stats.h`): `registered`, `dispatch`, `masked`, `not_recompiled`, `queued`, máscara habilitada e últimos valores. Distingue "o runtime nunca gera a interrupção" de "causa mascarada" e de "handler sem função gerada" (este último também vai para `PS2X_MISSING_LOG`) |
 | `PS2X_VIDEO_HZ` | Taxa de vblank emulada: `60` (NTSC, padrão) ou `50` (PAL). O launcher define pela região do `game.toml` |
-| `PS2X_GS` | *(após integrar `gs_gpu_integration.txt`)* `cpu` (padrão) ou `d3d11`. Extras: `PS2X_GS_VSYNC=1`, `PS2X_GS_DEBUG=1`, `PS2X_GS_FILTER=linear` |
+| `PS2X_GS` | *(integrado ao patch; ver `gs_gpu_integration.txt`)* `cpu` (padrão) ou `d3d11`. Extras: `PS2X_GS_VSYNC=1`, `PS2X_GS_DEBUG=1`, `PS2X_GS_FILTER=linear` |
 
 O resumo (`[perf] frames=… avg_fps=… one_percent_low_fps=… guest_vsync_hz=… realtime_pct=…`) sai no stdout ao encerrar. `realtime_pct` = ritmo do relógio emulado / ritmo esperado; 100% = velocidade real, abaixo disso o código recompilado está mais lento que o EE.
 

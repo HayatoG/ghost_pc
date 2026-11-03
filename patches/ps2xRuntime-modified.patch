@@ -557,7 +557,7 @@ index 45cb9d2..4e3d065 100644
      if (gameThread.joinable())
      {
 diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
-index 589d768..09dd9bf 100644
+index 589d768..3bda85b 100644
 --- a/ps2xRuntime/CMakeLists.txt
 +++ b/ps2xRuntime/CMakeLists.txt
 @@ -9,7 +9,7 @@ option(PS2X_ENABLE_RUNNER_UNITY_BUILD "Build ps2EntryRunner with CMake unity bui
@@ -579,7 +579,27 @@ index 589d768..09dd9bf 100644
      src/lib/ps2_rom_device.cpp
      src/lib/ps2_vfs.cpp
      src/lib/ps2_runtime.cpp
-@@ -462,6 +465,12 @@ else()
+@@ -396,6 +399,19 @@ add_library(ps2_runtime STATIC
+     src/lib/games_database.cpp
+ )
+ 
++# Backend GS por GPU (D3D11, Windows). Escolha em tempo de execucao: PS2X_GS=cpu|d3d11 (padrao cpu).
++if(WIN32 AND NOT PS2X_IS_ANDROID AND NOT PS2X_IS_VITA)
++    option(PS2X_ENABLE_GS_D3D11 "Build the D3D11 GS backend (PS2X_GS=d3d11)" ON)
++endif()
++if(PS2X_ENABLE_GS_D3D11)
++    target_sources(ps2_runtime PRIVATE
++        src/lib/gs/gs_rhi_d3d11.cpp
++        src/lib/gs/gs_gpu_backend.cpp
++    )
++    target_compile_definitions(ps2_runtime PRIVATE PS2X_HAS_GS_GPU=1)  # PRIVATE: nao invalida o PCH do runner (rebuild de 14 min)
++    target_link_libraries(ps2_runtime PUBLIC d3d11 dxgi d3dcompiler)
++endif()
++
+ if(PS2X_ENABLE_RUNTIME_LOGS)
+     target_compile_definitions(ps2_runtime PUBLIC
+         PS2_RUNTIME_LOGS=1
+@@ -462,6 +478,12 @@ else()
      )
  endif()
  
@@ -592,7 +612,7 @@ index 589d768..09dd9bf 100644
  if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
      set_target_properties(ps2EntryRunner PROPERTIES
          UNITY_BUILD ON
-@@ -469,6 +478,20 @@ if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
+@@ -469,6 +491,20 @@ if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
      )
  endif()
  
@@ -613,7 +633,7 @@ index 589d768..09dd9bf 100644
  if(PS2X_ENABLE_RUNNER_PCH)
      set(PS2X_RUNNER_PCH_HEADERS
          "${CMAKE_CURRENT_SOURCE_DIR}/include/ps2_runtime_macros.h"
-@@ -577,6 +600,23 @@ if(MSVC)
+@@ -577,6 +613,23 @@ if(MSVC)
      target_link_options(ps2EntryRunner PRIVATE "/FORCE:MULTIPLE")
  endif()
  
@@ -1660,4 +1680,49 @@ index 1cb1540..3b18417 100644
          uint32_t m_pageBase = UINT32_MAX;
 +        bool m_pending = false;
      };
+ }
+diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
+index 9281d5f..bcf125a 100644
+--- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
+@@ -1,5 +1,8 @@
+ #include "runtime/gs/gs_frontend.h"
+ #include "runtime/gs/gs_cpu_backend.h"
++#if defined(PS2X_HAS_GS_GPU)
++#include "runtime/gs/gs_gpu_backend.h"
++#endif
+ #include "ps2_log.h"
+ #include "runtime/ps2_memory.h"
+ #include <atomic>
+@@ -105,8 +108,21 @@ namespace
+ }
+ 
+ 
++namespace
++{
++    // Escolhe o backend de raster: PS2X_GS=d3d11 (se compilado) ou o de CPU (padrao).
++    std::unique_ptr<GSRasterBackend> makeRasterBackend()
++    {
++#if defined(PS2X_HAS_GS_GPU)
++        return CreateGSRasterBackendFromEnv();
++#else
++        return std::make_unique<GSCpuBackend>();
++#endif
++    }
++}
++
+ GS::GS()
+-    : m_backend(std::make_unique<GSCpuBackend>())
++    : m_backend(makeRasterBackend())
+ {
+     reset();
+ }
+@@ -117,7 +133,7 @@ void GS::init(uint8_t *vram, uint32_t vramSize, GSRegisters *privRegs)
+     m_localMemorySize = vramSize;
+     m_privRegs = privRegs;
+     if (!m_backend)
+-        m_backend = std::make_unique<GSCpuBackend>();
++        m_backend = makeRasterBackend();
+     m_backend->Initialize(vram, vramSize);
+     reset();
  }

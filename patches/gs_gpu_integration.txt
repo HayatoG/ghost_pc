@@ -1,4 +1,5 @@
-Integração proposta do GSGpuBackend (etapa 1) — NÃO aplicada, NÃO compilada no runtime ainda.
+Integração proposta do GSGpuBackend (etapa 1) — APLICADA no patch (ps2xRuntime-modified.patch) e compilada em 03/11; teste: MD5 do shot igual entre PS2X_GS=cpu e d3d11 (b7953d5a...).
+Obs.: PS2X_HAS_GS_GPU foi definido PRIVATE (PUBLIC invalidaria o PCH do runner e forcaria o rebuild de ~14 min).
 Aplicar à mão na árvore de build (work/ps2recomp_game) e depois regenerar o .patch.
 
 Arquivos novos (copiados pelo robocopy do README):
