@@ -1,0 +1,21 @@
+# Exploracao guiada: escolhe o idioma e deixa o jogo andar, com START/CROSS ocasionais para pular introducoes.
+# Quadros do host (a ~60 FPS, 60 quadros = 1 s).
+600  shot s00_menu_idioma
+700  CROSS
+760  -
+1100 shot s01
+1600 shot s02
+2000 START
+2030 -
+2400 shot s03
+2800 CROSS
+2830 -
+3200 shot s04
+3800 shot s05
+4400 shot s06
+4800 START
+4830 -
+5200 shot s07
+5800 shot s08
+6400 shot s09
+7000 quit
