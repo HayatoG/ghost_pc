@@ -9,6 +9,8 @@ O PS2Recomp (GPL-3.0) fica em `third_party/` (fora do git). Nossas mudanças sã
 | `ps2xRuntime/include/ps2_frame_stats.h`, `src/lib/ps2_frame_stats.cpp` | Medidor de FPS (CSV por segundo + resumo com percentis) |
 | `ps2xRuntime/tests/vpad_test.cpp` | Teste isolado do parser do pad virtual |
 
+`ps2xRuntime/src/lib/ghost_overrides.cpp` (arquivo novo): **overrides por endereço específicos deste jogo** (`SLES_530.20`), aplicados por `PS2_REGISTER_GAME_OVERRIDE`. Ligam funções internas do SDK que não têm HLE (`fioInit`, `fioIoctl`, `_sceCdSCmd`, `_sceCdNCmd`) a handlers genéricos (`ret0`/`ret1`). **Por que aqui e não no TOML do recompilador?** Acrescentar um stub no TOML muda `ps2_recompiled_stubs.h`, que todo arquivo gerado inclui — rebuild completo (~14 min). Um override é um arquivo só (~1 min). Para um novo "muro": uma linha em `kOverrides`.
+
 `CMakeLists.txt` (no `.patch`) também reserva **256 MB de pilha** (`/STACK`, opção `PS2X_STACK_RESERVE_MB`): cada chamada do guest é uma chamada C++ aninhada, e a pilha padrão de 1 MB estourava (`0xC00000FD`) no código gerado.
 
 `Kernel/EeScheduler.cpp` (no `.patch`): o período do vblank deixa de ser fixo em 60 Hz e passa a vir de `PS2X_VIDEO_HZ` (`include/ps2_video_clock.h`, compartilhado com o medidor).
@@ -22,6 +24,7 @@ O PS2Recomp (GPL-3.0) fica em `third_party/` (fora do git). Nossas mudanças sã
 | `PS2X_SHOT_DIR` | Pasta dos PNG do comando `shot` do pad virtual (padrão `shots/` no diretório corrente) |
 | `PS2X_MISSING_LOG` | Arquivo onde o runtime acrescenta **cada alvo de desvio sem função gerada** (`0xALVO tipo source=0xORIGEM`, uma vez por alvo). Alimenta `tools/ghidra/CreateFunctionsAt.java` |
 | `PS2X_HEARTBEAT` | Qualquer valor: imprime 1 linha por segundo (`[hb] frame= pc= ra= sp= dispfb1= display1= vsync= dma= gif= gsw= vif= threads=`) para ver **onde o jogo está** (preso esperando, desenhando, ocioso) |
+| `PS2X_HEARTBEAT` (linhas `[hb-irq]`) | Com o heartbeat ligado, também imprime contadores das interrupções INTC/DMAC (`include/ps2_irq_stats.h`): `registered`, `dispatch`, `masked`, `not_recompiled`, `queued`, máscara habilitada e últimos valores. Distingue "o runtime nunca gera a interrupção" de "causa mascarada" e de "handler sem função gerada" (este último também vai para `PS2X_MISSING_LOG`) |
 | `PS2X_VIDEO_HZ` | Taxa de vblank emulada: `60` (NTSC, padrão) ou `50` (PAL). O launcher define pela região do `game.toml` |
 
 O resumo (`[perf] frames=… avg_fps=… one_percent_low_fps=… guest_vsync_hz=… realtime_pct=…`) sai no stdout ao encerrar. `realtime_pct` = ritmo do relógio emulado / ritmo esperado; 100% = velocidade real, abaixo disso o código recompilado está mais lento que o EE.

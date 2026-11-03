@@ -1,0 +1,2 @@
+600 shot a_menu
+900 quit

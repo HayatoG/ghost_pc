@@ -1,0 +1,9 @@
+# Segura CROSS por 4 s (240 quadros) para o [hb-pad] amostrar o botao durante o aperto.
+600  shot a_menu
+700  CROSS
+940  -
+1000 shot b_apos_cross
+1300 UP
+1540 -
+1600 shot c_apos_up
+1800 quit

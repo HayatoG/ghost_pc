@@ -1,0 +1,12 @@
+# Teste de entrada: segura botoes por ~0,5 s e fotografa; observe [hb-pad] no log.
+600  shot a_menu
+700  DOWN
+740  -
+800  shot b_apos_down
+900  CROSS
+960  -
+1200 shot c_apos_cross
+1500 START
+1560 -
+1800 shot d_apos_start
+2100 quit

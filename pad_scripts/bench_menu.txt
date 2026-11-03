@@ -1,0 +1,4 @@
+# Benchmark do menu de idioma: mede por tempo de jogo, nao por quadros do host.
+# Tira a captura de regressao (deve ser IGUAL a work/reference/menu_idioma.png) e sai.
+600 shot bench_menu
+660 quit

@@ -13,9 +13,8 @@ boot_elf_sha256 = "9ddec62618d6770261ae87cb53eec04552d8f67ba794e3c5e8689b7523e25
 
 [extract]
 # O runtime usa o diretório do ELF como raiz do cdrom0:, então os dados do disco vão junto.
-# Vídeos (MOV00EU/MOV01EU/MOV02EU.BIN, ~2,2 GB) ficam de fora até serem necessários.
 work_dir = "work"
-files = ["SYSTEM.CNF", "SLES_530.20", "MODULES", "IMAGE.BIN", "BGM.BIN", "RTDEN2EU.BIN", "MOV00EUS.BIN"]
+files = ["SYSTEM.CNF", "SLES_530.20", "MODULES", "IMAGE.BIN", "BGM.BIN", "RTDEN2EU.BIN", "MOV00EUS.BIN", "MOV00EU.BIN", "MOV01EU.BIN", "MOV02EU.BIN"]
 
 [run]
 # Build de performance (LTCG e logs desligados; ver patches/README.md).
@@ -25,3 +24,4 @@ args = ["{elf}"]
 [run.env]
 # Padrões do runtime; sobrescreva por linha de comando (--fps, --pad-script, --fps-log).
 PS2X_TARGET_FPS = "60"
+

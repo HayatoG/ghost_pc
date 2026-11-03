@@ -74,18 +74,20 @@ index b50a4cf..52ddf41 100644
          struct PadInputState
          {
 diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
-index c5e31c4..6cbc380 100644
+index c5e31c4..b506b59 100644
 --- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
-@@ -2,6 +2,7 @@
+@@ -1,7 +1,9 @@
+ #include "runtime/ee_scheduler.h"
  
++#include "ps2_irq_stats.h"
  #include "ps2_log.h"
  #include "ps2_runtime_macros.h"
 +#include "ps2_video_clock.h"
  
  #include <algorithm>
  #include <cassert>
-@@ -31,8 +32,12 @@ namespace
+@@ -31,8 +33,12 @@ namespace
      constexpr uint32_t WEF_OR = 0x01u;
      constexpr uint32_t WEF_CLEAR = 0x10u;
      constexpr uint32_t WEF_CLEAR_ALL = 0x20u;
@@ -99,7 +101,7 @@ index c5e31c4..6cbc380 100644
      constexpr uint64_t kAlarmTickMicroseconds = 64u;
      constexpr uint32_t kDebugPublishDispatchInterval = 4096u;
  
-@@ -50,7 +55,11 @@ namespace
+@@ -50,7 +56,11 @@ namespace
          return std::chrono::seconds(wholeSeconds) + std::chrono::nanoseconds(remainingNanoseconds);
      }
  
@@ -112,7 +114,7 @@ index c5e31c4..6cbc380 100644
      constexpr uint64_t kVBlankDurationCycles = microsecondsToEeCycles(500u);
      constexpr uint64_t kAlarmTickCycles = microsecondsToEeCycles(kAlarmTickMicroseconds);
  
-@@ -146,8 +155,8 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
+@@ -146,8 +156,8 @@ void EeScheduler::reset(uint8_t *rdram, const R5900Context &mainContext)
      main.status = EeThreadStatus::Ready;
      m_threads.emplace(main.id, std::move(main));
      m_readyQueues[0].push_back(kMainThreadId);
@@ -123,7 +125,115 @@ index c5e31c4..6cbc380 100644
                    EeEvent{EeEventType::VBlankStart, 0, 0});
      publishSnapshot();
  }
-@@ -1850,8 +1859,8 @@ void EeScheduler::processDueDeadlines()
+@@ -1207,9 +1217,29 @@ int EeScheduler::addIrqHandler(bool dmac,
+                                   sp,
+                                   true,
+                                   append ? ++tail : --head});
++    ps2_irq::Stats &irqStats = ps2_irq::stats(dmac);
++    ++irqStats.registered;
++    irqStats.lastRegisteredCause.store(cause, std::memory_order_relaxed);
++    irqStats.lastRegisteredHandler.store(handler, std::memory_order_relaxed);
++    redeliverPendingDmac(dmac, cause);
+     return id;
+ }
+ 
++// A DMAC cause latched while masked or without a usable handler is delivered as soon as one becomes available.
++void EeScheduler::redeliverPendingDmac(bool dmac, uint32_t cause)
++{
++    if (!dmac || cause >= 32u)
++    {
++        return;
++    }
++    ps2_irq::Stats &irqStats = ps2_irq::stats(true);
++    if ((irqStats.pendingMask.load(std::memory_order_relaxed) & (1u << cause)) != 0u)
++    {
++        ++irqStats.redelivered;
++        dispatchIrq(true, cause);
++    }
++}
++
+ int EeScheduler::removeIrqHandler(bool dmac, uint32_t cause, int id)
+ {
+     assertExecutor();
+@@ -1230,6 +1260,10 @@ int EeScheduler::setIrqHandlerEnabled(bool dmac, int id, bool enabled)
+     if (it != handlers.end())
+     {
+         it->second.enabled = enabled;
++        if (enabled)
++        {
++            redeliverPendingDmac(dmac, it->second.cause);
++        }
+     }
+     return KE_OK;
+ }
+@@ -1248,6 +1282,11 @@ int EeScheduler::setIrqCauseEnabled(bool dmac, uint32_t cause, bool enabled)
+         {
+             mask &= ~(1u << cause);
+         }
++        ps2_irq::stats(dmac).enabledMask.store(mask, std::memory_order_relaxed);
++        if (enabled)
++        {
++            redeliverPendingDmac(dmac, cause);
++        }
+     }
+     return KE_OK;
+ }
+@@ -1255,9 +1294,18 @@ int EeScheduler::setIrqCauseEnabled(bool dmac, uint32_t cause, bool enabled)
+ void EeScheduler::dispatchIrq(bool dmac, uint32_t cause)
+ {
+     assertExecutor();
++    ps2_irq::Stats &irqStats = ps2_irq::stats(dmac);
++    ++irqStats.dispatchCalls;
+     const uint32_t mask = dmac ? m_enabledDmacMask : m_enabledIntcMask;
+     if (cause < 32u && (mask & (1u << cause)) == 0u)
+     {
++        ++irqStats.maskedOut;
++        irqStats.lastMaskedCause.store(cause, std::memory_order_relaxed);
++        if (dmac)
++        {
++            irqStats.pendingMask.fetch_or(1u << cause, std::memory_order_relaxed);
++            ++irqStats.latched;
++        }
+         return;
+     }
+     const auto &handlers = dmac ? m_dmacHandlers : m_intcHandlers;
+@@ -1265,10 +1313,32 @@ void EeScheduler::dispatchIrq(bool dmac, uint32_t cause)
+     for (const auto &[id, handler] : handlers)
+     {
+         (void)id;
+-        if (handler.enabled && handler.cause == cause && handler.handler != 0u &&
+-            m_runtime.hasFunction(handler.handler))
++        if (!handler.enabled || handler.cause != cause || handler.handler == 0u)
++        {
++            continue;
++        }
++        if (!m_runtime.hasFunction(handler.handler))
++        {
++            // The interrupt handler exists in guest code but was never recompiled (pointer-only target).
++            ++irqStats.handlerNotRecompiled;
++            irqStats.lastUnrecompiledHandler.store(handler.handler, std::memory_order_relaxed);
++            ps2_diag::recordMissingTarget(handler.handler, 0u, dmac ? "DmacHandler" : "IntcHandler");
++            continue;
++        }
++        matching.push_back(handler);
++    }
++    irqStats.queued += matching.size();
++    if (dmac && cause < 32u)
++    {
++        if (matching.empty())
++        {
++            // No usable handler yet: keep the cause pending (see redeliverPendingDmac).
++            irqStats.pendingMask.fetch_or(1u << cause, std::memory_order_relaxed);
++            ++irqStats.latched;
++        }
++        else
+         {
+-            matching.push_back(handler);
++            irqStats.pendingMask.fetch_and(~(1u << cause), std::memory_order_relaxed);
+         }
+     }
+     std::sort(matching.begin(), matching.end(), [](const EeIrqHandler &left, const EeIrqHandler &right)
+@@ -1850,8 +1920,8 @@ void EeScheduler::processDueDeadlines()
                  scheduleEvent(scheduled.deadlineCycle + kVBlankDurationCycles,
                                scheduled.hostDeadline + kVBlankDuration,
                                EeEvent{EeEventType::VBlankEnd, 0, m_vsyncTick + 1u});
@@ -134,21 +244,50 @@ index c5e31c4..6cbc380 100644
                                EeEvent{EeEventType::VBlankStart, 0, 0});
              }
              processEvent(scheduled.event);
+@@ -1901,6 +1971,8 @@ void EeScheduler::processEvent(const EeEvent &event)
+             queueInvocation(std::move(invocation));
+         }
+         dispatchIrq(false, 2u);
++        // Deliver DMA completions that no MMIO store drained (a thread blocked in WaitSema performs no stores).
++        m_runtime.drainCompletedDmacHandlers(m_rdram);
+         break;
+     case EeEventType::ExternalWake:
+         completeExternalWait(event.id, event.value, KE_OK);
+diff --git a/ps2xRuntime/include/runtime/ee_scheduler.h b/ps2xRuntime/include/runtime/ee_scheduler.h
+index f247ff9..ddea578 100644
+--- a/ps2xRuntime/include/runtime/ee_scheduler.h
++++ b/ps2xRuntime/include/runtime/ee_scheduler.h
+@@ -361,6 +361,9 @@ public:
+     void publishSnapshot();
+ 
+ private:
++    // Delivers a latched DMAC cause once a handler or the cause mask becomes available.
++    void redeliverPendingDmac(bool dmac, uint32_t cause);
++
+     struct ScheduledEvent
+     {
+         uint64_t deadlineCycle = 0;
 diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
-index 45cb9d2..c97513d 100644
+index 45cb9d2..4e3d065 100644
 --- a/ps2xRuntime/src/lib/ps2_runtime.cpp
 +++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
-@@ -12,6 +12,9 @@
+@@ -9,9 +9,15 @@
+ #include "ThreadNaming.h"
+ #include "Kernel/Stubs/Audio.h"
+ #include "Kernel/Stubs/GS.h"
++#include "Kernel/Stubs/Pad.h"
  #include "Kernel/Stubs/MPEG.h"
  #include "ps2_host_backend.h"
  #include "ps2_iop_host.h"
 +#include "ps2_frame_stats.h"
++#include "ps2_irq_stats.h"
++#include "ps2_sampling_profiler.h"
 +#include "ps2_video_clock.h"
 +#include "ps2_virtual_pad.h"
  #include "ps2x/iop/iop_subsystem.h"
  
  #include <iostream>
-@@ -19,8 +22,11 @@
+@@ -19,8 +25,11 @@
  #include <fstream>
  #include <algorithm>
  #include <array>
@@ -160,7 +299,7 @@ index 45cb9d2..c97513d 100644
  #include <chrono>
  #include <atomic>
  #include <thread>
-@@ -49,6 +55,48 @@ static constexpr int HOST_WINDOW_HEIGHT = 544;
+@@ -49,6 +58,48 @@ static constexpr int HOST_WINDOW_HEIGHT = 544;
  static constexpr int HOST_WINDOW_WIDTH = FB_WIDTH;
  static constexpr int HOST_WINDOW_HEIGHT = DEFAULT_DISPLAY_HEIGHT;
  #endif
@@ -209,7 +348,7 @@ index 45cb9d2..c97513d 100644
  struct ElfHeader
  {
      uint32_t magic;
-@@ -736,7 +784,25 @@ bool PS2Runtime::initialize(const char *title)
+@@ -736,7 +787,25 @@ bool PS2Runtime::initialize(const char *title)
          InitAudioDevice();
          m_audioBackend.setAudioReady(IsAudioDeviceReady());
  #endif
@@ -236,59 +375,59 @@ index 45cb9d2..c97513d 100644
          if (m_debugUiInitCallback)
          {
              m_debugUiInitCallback(*this, m_debugUiUserData);
-@@ -1184,6 +1250,30 @@ void PS2Runtime::resetMissingFunctionReportOnce()
-     m_missingFunctionReported.store(false, std::memory_order_release);
- }
- 
-+// PS2X_MISSING_LOG: appends one line per *unique* missing branch target ("0xTARGET kind source=0xSRC").
-+// The full diagnostic dump below only covers the first miss, which forces one rebuild per address; this
-+// list lets every uncovered function start be fixed in a single pass (see tools/ghidra/CreateFunctionsAt.java).
-+static void recordMissingTarget(uint32_t targetPc, uint32_t sourcePc, const char *kindName)
-+{
-+    static std::mutex mutex;
-+    static std::unordered_map<uint32_t, uint64_t> seen;
-+    static const std::string path = envString("PS2X_MISSING_LOG");
-+
-+    std::lock_guard<std::mutex> lock(mutex);
-+    const bool isNew = ++seen[targetPc] == 1u;
-+    if (!isNew || path.empty())
-+    {
-+        return;
-+    }
-+
-+    std::ofstream out(path, std::ios::app);
-+    if (out)
-+    {
-+        out << "0x" << std::hex << targetPc << std::dec << ' ' << kindName << " source=0x" << std::hex << sourcePc
-+            << std::dec << '\n';
-+    }
-+}
-+
- void PS2Runtime::reportMissingFunction(uint8_t *rdram,
-                                        R5900Context *ctx,
-                                        uint32_t targetPc,
-@@ -1191,6 +1281,7 @@ void PS2Runtime::reportMissingFunction(uint8_t *rdram,
+@@ -1191,6 +1260,7 @@ void PS2Runtime::reportMissingFunction(uint8_t *rdram,
                                         GuestBranchKind kind,
                                         const char *debugName)
  {
-+    recordMissingTarget(targetPc, sourcePc, describeGuestBranchKind(kind));
++    ps2_diag::recordMissingTarget(targetPc, sourcePc, describeGuestBranchKind(kind));
      const MissingFunctionPolicy policy = missingFunctionPolicy();
      const bool firstReport = !m_missingFunctionReported.exchange(true, std::memory_order_acq_rel);
  
-@@ -2386,6 +2477,12 @@ void PS2Runtime::run()
+@@ -2385,7 +2455,43 @@ void PS2Runtime::run()
+         }
          gameThreadFinished.store(true, std::memory_order_release); });
  
++    // PS2X_PROFILE_SECONDS=N: sample the game thread for N seconds (after PS2X_PROFILE_DELAY, default 20 s of warm-up)
++    // and write the address histogram to PS2X_PROFILE_OUT; resolve it with tools/resolve_profile.py.
++    ps2_perf::SamplingProfiler profiler;
++    {
++        const double profileSeconds = std::atof(envString("PS2X_PROFILE_SECONDS").c_str());
++        if (profileSeconds > 0.0)
++        {
++            const std::string delayText = envString("PS2X_PROFILE_DELAY");
++            const double profileDelay = delayText.empty() ? 20.0 : std::atof(delayText.c_str());
++            const std::string outEnv = envString("PS2X_PROFILE_OUT");
++            const std::string profileOut = outEnv.empty() ? std::string("ps2_profile.txt") : outEnv;
++            if (profiler.start(gameThread.native_handle(), profileDelay, profileSeconds, profileOut))
++            {
++                std::cout << "[profile] sampling the game thread: delay=" << profileDelay << "s duration="
++                          << profileSeconds << "s -> " << profileOut << std::endl;
++            }
++        }
++    }
++
      uint64_t tick = 0;
 +    uint64_t hostFrame = 0;
 +    constexpr uint64_t kHeartbeatFrames = 60;
 +    const bool heartbeatEnabled = !envString("PS2X_HEARTBEAT").empty();
++    std::vector<uint32_t> peekAddresses;
++    {
++        std::istringstream list(envString("PS2X_PEEK"));
++        for (std::string token; std::getline(list, token, ',');)
++        {
++            if (!token.empty())
++            {
++                peekAddresses.push_back(static_cast<uint32_t>(std::strtoul(token.c_str(), nullptr, 0)));
++            }
++        }
++    }
 +    const std::string shotDirEnv = envString("PS2X_SHOT_DIR");
 +    const std::string shotDir = shotDirEnv.empty() ? std::string("shots") : shotDirEnv;
 +    ps2_perf::FrameStats frameStats(envString("PS2X_FPS_LOG"), ps2_clock::configuredVideoHz());
      while (!isStopRequested() && !gameThreadFinished.load(std::memory_order_acquire))
      {
          PS2_IF_AGRESSIVE_LOGS({
-@@ -2446,6 +2543,43 @@ void PS2Runtime::run()
+@@ -2446,6 +2552,88 @@ void PS2Runtime::run()
          }
          EndDrawing();
  
@@ -313,6 +452,51 @@ index 45cb9d2..c97513d 100644
 +                      << " vif=" << m_memory.vifWriteCount()
 +                      << " threads=" << m_eeScheduler->snapshot().threads.size()
 +                      << std::endl;
++            if (!peekAddresses.empty())
++            {
++                // PS2X_PEEK=0xADDR[,0xADDR...]: guest RAM words, to watch a game's state variables without a debugger.
++                std::cout << "[hb-peek]" << std::hex;
++                const uint8_t *ram = m_memory.getRDRAM();
++                for (const uint32_t address : peekAddresses)
++                {
++                    uint32_t value = 0u;
++                    const uint32_t physical = address & 0x1FFFFFFFu;
++                    if (ram != nullptr && physical <= PS2_RAM_SIZE - sizeof(value))
++                    {
++                        std::memcpy(&value, ram + physical, sizeof(value));
++                    }
++                    std::cout << " 0x" << address << "=0x" << value;
++                }
++                std::cout << std::dec << std::endl;
++            }
++            {
++                // What the game actually reads from the pad (port 0): proves whether virtual input arrives.
++                const ps2_stubs::PadDebugSnapshot pad = ps2_stubs::getPadDebugSnapshot();
++                const ps2_stubs::PadDebugPortSnapshot &port0 = pad.ports[0][0];
++                std::cout << "[hb-pad] port0 open=" << port0.open << " reads=" << port0.readCount
++                          << " override=" << pad.overrideEnabled << " used_override=" << port0.lastUsedOverride
++                          << " last_buttons=0x" << std::hex << port0.lastButtons << " override_buttons=0x"
++                          << pad.overrideButtons << std::dec << " analog=" << port0.analogMode << std::endl;
++            }
++            for (const bool dmacIrq : {true, false})
++            {
++                const ps2_irq::Stats &irq = ps2_irq::stats(dmacIrq);
++                std::cout << "[hb-irq] " << (dmacIrq ? "dmac" : "intc")
++                          << " registered=" << irq.registered.load(std::memory_order_relaxed)
++                          << " dispatch=" << irq.dispatchCalls.load(std::memory_order_relaxed)
++                          << " masked=" << irq.maskedOut.load(std::memory_order_relaxed)
++                          << " not_recompiled=" << irq.handlerNotRecompiled.load(std::memory_order_relaxed)
++                          << " queued=" << irq.queued.load(std::memory_order_relaxed)
++                          << " latched=" << irq.latched.load(std::memory_order_relaxed)
++                          << " redelivered=" << irq.redelivered.load(std::memory_order_relaxed) << std::hex
++                          << " pending_mask=0x" << irq.pendingMask.load(std::memory_order_relaxed)
++                          << " enabled_mask=0x" << irq.enabledMask.load(std::memory_order_relaxed)
++                          << " last_reg_cause=0x" << irq.lastRegisteredCause.load(std::memory_order_relaxed)
++                          << " last_reg_handler=0x" << irq.lastRegisteredHandler.load(std::memory_order_relaxed)
++                          << " last_masked_cause=0x" << irq.lastMaskedCause.load(std::memory_order_relaxed)
++                          << " last_unrecompiled=0x" << irq.lastUnrecompiledHandler.load(std::memory_order_relaxed)
++                          << std::dec << std::endl;
++            }
 +        }
 +        if (ps2_virtual_pad::isLoaded())
 +        {
@@ -332,16 +516,17 @@ index 45cb9d2..c97513d 100644
          if (WindowShouldClose())
          {
              RUNTIME_LOG("[run] window close requested, breaking out of loop");
-@@ -2454,6 +2588,7 @@ void PS2Runtime::run()
+@@ -2454,6 +2642,8 @@ void PS2Runtime::run()
          }
      }
  
 +    frameStats.printSummary();
++    profiler.stop();
      requestStop();
      if (gameThread.joinable())
      {
 diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
-index 589d768..e9dde94 100644
+index 589d768..8e5837c 100644
 --- a/ps2xRuntime/CMakeLists.txt
 +++ b/ps2xRuntime/CMakeLists.txt
 @@ -9,6 +9,7 @@ option(PS2X_ENABLE_RUNNER_UNITY_BUILD "Build ps2EntryRunner with CMake unity bui
@@ -352,16 +537,30 @@ index 589d768..e9dde94 100644
  
  option(PS2X_ENABLE_RUNTIME_LOGS "Enable PS2 runtime logs" ON)
  option(PS2X_ENABLE_AGRESSIVE_LOGS "Enable very verbose/agressive PS2 runtime logs" ON)
-@@ -386,6 +387,8 @@ add_library(ps2_runtime STATIC
+@@ -386,6 +387,9 @@ add_library(ps2_runtime STATIC
      src/lib/ps2_iop_host.cpp
      src/lib/ps2_memory.cpp
      src/lib/ps2_pad.cpp
 +    src/lib/ps2_frame_stats.cpp
++    src/lib/ps2_sampling_profiler.cpp
 +    src/lib/ps2_virtual_pad.cpp
      src/lib/ps2_rom_device.cpp
      src/lib/ps2_vfs.cpp
      src/lib/ps2_runtime.cpp
-@@ -469,6 +472,20 @@ if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
+@@ -462,6 +466,12 @@ else()
+     )
+ endif()
+ 
++# Per-title overrides register themselves from a static initializer. Inside the static ps2_runtime library the
++# linker drops an object nothing references, so the title module is compiled straight into the executable
++# (and kept out of the unity batches so editing it rebuilds only itself).
++target_sources(ps2EntryRunner PRIVATE src/lib/ghost_overrides.cpp)
++set_source_files_properties(src/lib/ghost_overrides.cpp PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE)
++
+ if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
+     set_target_properties(ps2EntryRunner PROPERTIES
+         UNITY_BUILD ON
+@@ -469,6 +479,20 @@ if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
      )
  endif()
  
@@ -382,7 +581,7 @@ index 589d768..e9dde94 100644
  if(PS2X_ENABLE_RUNNER_PCH)
      set(PS2X_RUNNER_PCH_HEADERS
          "${CMAKE_CURRENT_SOURCE_DIR}/include/ps2_runtime_macros.h"
-@@ -577,6 +594,16 @@ if(MSVC)
+@@ -577,6 +601,23 @@ if(MSVC)
      target_link_options(ps2EntryRunner PRIVATE "/FORCE:MULTIPLE")
  endif()
  
@@ -394,6 +593,13 @@ index 589d768..e9dde94 100644
 +if(MSVC)
 +    math(EXPR PS2X_STACK_RESERVE_BYTES "${PS2X_STACK_RESERVE_MB} * 1024 * 1024")
 +    target_link_options(ps2EntryRunner PRIVATE "/STACK:${PS2X_STACK_RESERVE_BYTES}")
++
++    # Linker map (public symbols with RVAs): lets tools/resolve_profile.py name the sampling profiler's addresses
++    # without a PDB. Costs nothing at run time.
++    option(PS2X_GENERATE_LINK_MAP "Write ps2EntryRunner.map next to the executable (MSVC)" ON)
++    if(PS2X_GENERATE_LINK_MAP)
++        target_link_options(ps2EntryRunner PRIVATE "/MAP:$<TARGET_FILE_DIR:ps2EntryRunner>/ps2EntryRunner.map")
++    endif()
 +endif()
 +
  # Vita: Work around for GCC 10's LTO plugin

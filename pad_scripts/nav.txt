@@ -1,0 +1,16 @@
+# Navega do menu de idioma: espera o menu (~10 s), confirma ENGLISH com CROSS e observa as telas seguintes.
+# Quadros apresentados do host; a 60 FPS, 60 quadros = 1 s.
+600  shot menu_idioma
+660  CROSS
+666  -
+900  shot apos_idioma_4s
+1500 shot apos_idioma_14s
+1800 START
+1806 -
+2100 shot apos_start_5s
+2400 CROSS
+2406 -
+2700 shot apos_cross_5s
+3300 shot t55s
+3900 shot t65s
+4200 quit

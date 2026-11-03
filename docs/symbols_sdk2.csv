@@ -1,0 +1,129 @@
+address,name,confidence,evidence
+0x0029ad10,cos,medium,"|x|<pi/4 -> __kernel_cosf(x,0) else rem_pio2f + quadrant switch (float cos)"
+0x0029ae78,sin,medium,"|x|<0x3f490fd9 -> __kernel_sinf(x,0,0) else rem_pio2f + quadrant switch (float sin); 20 game callers"
+0x0029af60,tan,medium,rem_pio2f + kernel tan (pio4 3.7748944e-08 consts) with (n&1)*-2+1
+0x0029aff0,log,low,"[guess] wrapper of 0x29b7c0 = double-precision __ieee754_log (0x95f64 constant, soft-float helpers); ABI is 64-bit GPR double, not float"
+0x0029b050,atan2,medium,"wrapper of 0x29ce68: float atan2 (y,x) with quadrant fixups pi=0x40490fda and calls atanf 0x29f878"
+0x0029b080,sqrt,medium,wrapper of 0x29d5c8: bit-by-bit float square root (__ieee754_sqrtf); many game callers. Note 0x29b008 is a DOUBLE sqrt wrapper left unnamed
+0x0029d218,__ieee754_rem_pio2f,high,"called by sin/cos/tan with quadrant n&3 result, calls __kernel_rem_pio2 (0x29e848: floor/scalbn) for large args"
+0x0029e6f8,__kernel_cosf,medium,"(x,y) float kernel, only callers are sin/cos wrappers 0x29ae78/0x29ad10"
+0x0029f0b0,__kernel_sinf,high,"Taylor coeffs 1.5896909e-10,-2.505076e-08,2.7557312e-06,-1.9841270e-04,8.3333e-03,-1/6"
+0x0029fd70,sceDevVu0Reset,medium,ctc2 vi28 (VU0 FBRST) |= 2 = RST; 4th in main init sequence GIF/VIF0/VIF1/VU0/VU1 at 0x19435c
+0x002a0a00,sceDevVif0Reset,medium,"REG_VIF0_FBRST=1, REG_VIF0_ERR=6; 2nd in main init reset sequence at 0x19435c (VIF1 twin at 0x2a0d30)"
+0x002a1188,_sceDmaSyncWait,medium,"[fix of symbols.csv sceDmaSync] 3-arg internal (d,run,timeout) wait until MADR>=run, only caller is sceDmaSyncN 0x2a1878; real sceDmaSync is 0x2a1840"
+0x002a1270,sceDmaGetChan,high,id<10 returns table entry at 0x410320 (&D0..D9_CHCR) else NULL; 5 game callers pass channel id
+0x002a1378,sceDmaPutEnv,high,"validates env bytes (>9,>9,>9,>6 -> -1..-4) then writes D_CTRL/D_PCR/D_SQWC/D_RBOR/D_RBSR; only caller sceDmaReset"
+0x002a15a0,sceDmaSend,high,"tadr(+0x30)=addr, qwc=0, CHCR|=0x105 (chain+dir+STR) after wait on STR with 'libdma: sync timeout'; game callers"
+0x002a1608,sceDmaSendN,high,"madr(+0x10)=addr, qwc=n, CHCR 0x101 (normal mode, dir=from mem, STR)"
+0x002a1680,sceDmaSendI,high,"madr=addr, qwc=n, CHCR 0x109 (interleave mode, dir=from mem, STR)"
+0x002a16f8,sceDmaRecv,low,"[guess] qwc=0, CHCR 0x104 (chain, dir=to mem, STR), no address written; family pattern with RecvN/RecvI"
+0x002a1740,sceDmaRecvN,high,"madr=addr, qwc=n, CHCR 0x100 (normal, dir=to mem, STR)"
+0x002a17c0,sceDmaRecvI,high,"madr=addr, qwc=n, CHCR 0x108 (interleave, dir=to mem, STR)"
+0x002a1840,sceDmaSync,medium,"(d,mode): mode==1 -> returns CHCR.STR (poll) else waits STR via 0x2a1118 ('libdma: sync timeout'); sole caller is game wrapper with 'ps2_dma_sync: timeout'"
+0x002a1878,sceDmaSyncN,medium,"(d,run,mode,timeout): mode==1 polls MADR<run else calls 0x2a1188 wait loop"
+0x002a1c58,scePadEnd,medium,"padman RPC fn 0xf, no args, clears init flag 0x410358 on success"
+0x002a1ec0,scePadPortClose,medium,"padman RPC fn 0xe (port,slot), clears per-slot state at 0x5d12a0; counterpart of scePadPortOpen 0x2a1cd8"
+0x002a2028,scePadRead,high,"(port,slot,buf): DIntr, picks double-buffer half (0x80) of slot DMA buffer, memcpy to user buf, EIntr; polled by game pad task 0x101aec together with GetState"
+0x002a2190,scePadGetState,high,returns state byte +0x70; if ==6 (STABLE) and reqState(+0x71)==2 (BUSY) returns 5 (EXECCMD); 'c' for invalid port/slot
+0x002a2330,scePadInfoAct,high,"(port,slot,actno,term) term 1..4 table lookup at +0x30+actno*4; actno==-1 returns count (+0x6a); requires id>=2"
+0x002a2570,scePadInfoMode,high,"(port,slot,term,idx) term 1=cur id,2=cur ext id,3=cur offs,4=table/count (idx -1 -> count +0x68)"
+0x002a26a8,scePadSetMainMode,medium,"padman RPC fn 6 with 4 args (port,slot,mode,lock) then sets reqState(+0x71)=2 BUSY"
+0x002a2760,scePadSetActDirect,medium,"(port,slot,data[6]): copies 6 bytes into slot DMA buffer, flags, sends via SIF DMA helper 0x2a1960 ('libpad: sceSifSetDma faild')"
+0x002a2820,scePadSetActAlign,medium,"padman RPC fn 8 with 6 bytes copied to arg block, reqState=BUSY"
+0x002a28f8,scePadGetButtonMask,medium,requires id>=2; composes 32-bit mask from bytes +0x79..+0x7c; used only by 0x2a2a60
+0x002a29b0,scePadSetButtonInfo,medium,"padman RPC fn 10 (port,slot,mask), reqState=BUSY"
+0x002a2a60,scePadInfoPressMode,medium,returns GetButtonMask==0x3ffff (all buttons incl. pressure)
+0x002a2ac0,scePadEnterPressMode,medium,"calls SetButtonInfo(port,slot,0xfff)"
+0x002a2b70,scePadSetVrefParam,medium,"padman RPC fn 0xb with 12-byte param block copied from caller, reqState=BUSY"
+0x002a2c40,scePadGetPortMax,medium,"padman RPC fn 0xc, no args, returns result word"
+0x002a2ca8,scePadGetSlotMax,medium,"padman RPC fn 0xd, 1 arg (port), returns result word"
+0x002a2d10,scePadGetModVersion,medium,"padman RPC fn 0x12, no args; only caller scePadInit (version check 'libpad: Module version mismatch')"
+0x002a3330,sceGsSyncVCallback,medium,"AddIntcHandler(2=VBLANK_START,func,-1)+EnableIntc, removes previous handler (kept in libgraph state 0x4103a0 +8/+0xc), func==0 removes; callers are game vsync task 0x19c070/0x19c090"
+0x002a33d0,sceVu0ApplyMatrix,high,"v0=m*v1: lqc2 x4 rows, vmulabc/vmaddabc chain, 61 callers"
+0x002a3450,sceVu0MulMatrix,high,"loop x4: each row of m2 through m1 with vmulabc/vmaddabc chain, 66 callers"
+0x002a34e0,sceVu0OuterProduct,high,"vopmula/vopmsub cross product, w cleared"
+0x002a3550,sceVu0InnerProduct,high,"vmul + vaddbc reduction, returns float via qmfc2"
+0x002a35c0,sceVu0Normalize,high,"vmul/vaddbc length^2, vsqrt, vdiv, vmulq"
+0x002a3640,sceVu0TransposeMatrix,high,4x4 transpose with pextlw/pextuw/pcpyld/pcpyud
+0x002a36c8,sceVu0InversMatrix,medium,transpose 3x3 + translation = -(R^T*t) (rigid-body inverse)
+0x002a3778,sceVu0DivVector,medium,"vdiv(1,q) then vmulq.xyzw; xyz-only twin is 0x2a37e8"
+0x002a37e8,sceVu0DivVectorXYZ,medium,same as DivVector but vmulq.xyz
+0x002a3858,sceVu0InterVector,high,lerp v1*t+v2*(1-t) with .xyzw masks
+0x002a38e0,sceVu0AddVector,high,vadd.xyzw
+0x002a3948,sceVu0SubVector,high,vsub.xyzw
+0x002a39b0,sceVu0MulVector,high,vmul.xyzw
+0x002a3a18,sceVu0ScaleVector,high,vmulx.xyzw by scalar from qmtc2
+0x002a3a80,sceVu0TransMatrix,high,"copies 3 rotation rows, row3 = m1.row3 + tv"
+0x002a3b00,sceVu0CopyVector,high,copies 4 words
+0x002a3b50,sceVu0CopyMatrix,high,copies 16 words
+0x002a3bb8,sceVu0FTOI4Vector,high,vftoi4
+0x002a3c08,sceVu0FTOI0Vector,high,vftoi0
+0x002a3c58,sceVu0ITOF4Vector,high,vitof4
+0x002a3ca8,sceVu0ITOF0Vector,high,vitof0
+0x002a3cf8,sceVu0UnitMatrix,high,"identity via vmr32 chain, 7 callers"
+0x002a3dc8,sceVu0RotMatrixZ,medium,"sin/cos via helper 0x2a3d50 (angle+pi/2 trick), builds rotation and multiplies 4 rows; called first by sceVu0RotMatrix with rot[2] [verify axis]"
+0x002a3eb8,sceVu0RotMatrixX,medium,same family; called last by sceVu0RotMatrix with rot[0] [verify axis]
+0x002a3fb0,sceVu0RotMatrixY,medium,same family; called second by sceVu0RotMatrix with rot[1] [verify axis]
+0x002a40a8,sceVu0RotMatrix,medium,"calls RotMatrixZ(rot[2]),Y(rot[1]),X(rot[0]) in this order"
+0x002a40f8,sceVu0ClampVector,high,vmaxx then vminibcx with min/max scalars
+0x002a4180,sceVu0CameraMatrix,high,"outer products + normalizes of (zd,yd), unit matrix, TransMatrix with p, InversMatrix"
+0x002a4230,sceVu0NormalLightMatrix,medium,"normalizes -l0,-l1,-l2 into rows, row3=(0,0,0,1), transpose"
+0x002a4358,sceVu0ViewScreenMatrix,high,"10 args incl scrz,ax,ay,cx,cy,zmin,zmax,nearz,farz; computes depth scale/offset and multiplies matrices"
+0x002a45f0,sceVu0RotTransPersN,high,"loop n: matrix*v, vdiv by w, vftoi4 (or vftoi0 if flag)"
+0x002a46b8,sceVu0RotTransPers,high,single vector version of RotTransPersN
+0x002a4780,sceVu0InterVectorXYZ,high,lerp with .xyz masks and vmove.w keeping w of v1
+0x002a4810,sceVu0ScaleVectorXYZ,high,vmulx.xyz by scalar (w preserved)
+0x002a4878,sceVu0ClipScreen,high,"compares xyz against 2048.0 (0x45800000) via VU clip flags, returns flags&0xc0"
+0x002a48f8,sceVu0ClipScreen3,high,ClipScreen for 3 vectors
+0x002a49a8,sceVu0ClipAll,medium,"loop n over vectors: m*v, scaled by min/max bounds, VU clipping flag test, early return"
+0x002a4a98,sceVpu0Reset,low,"[guess] DIntr; VIF0 MARK/ERR=0, FBRST=1, VU0 FBRST|=2, then pushes VIF codes STCYCL/STMASK/STMOD/ITOP (0x4103d0) to VIF0_FIFO 0x10004000"
+0x002a50b0,sceMpegDemuxPss,medium,"(mp,data,size): wrapper of 0x2a4da0 which parses MPEG-PS packs (0x1ba/0x1b9 start codes, PES headers) and dispatches stream callbacks; caller subtracts consumed bytes"
+0x002a50d0,sceMpegAddStrCallback,medium,"(mp,strm,ch,cb,arg) keyed table of <=0x40 entries at priv+0x60; caller 0x24d600 sets it up with AddCallback and Create"
+0x002a5938,sceMpegInit,medium,"stops IPU DMA ch3/ch4 (clears STR), QWC=0, sceIpuInit; called once by movie setup 0x24d244 before IOP alloc"
+0x002a59e8,sceMpegCreate,high,string 'The size of work area is too small' referenced; carves work area (0x2a5ff8) and resets decoder
+0x002a5c40,sceMpegGetPicture,medium,"(mp,rgb32,mbcount) sets mode flag priv+200=1, 64B aligned uncached dest, calls common 0x2a6080"
+0x002a5c88,sceMpegGetPictureRAW8,medium,same with mode flag 0 (RAW8 output)
+0x002a5cd0,sceMpegGetPictureRAW8xy,medium,"(mp,dest,x,y): stride x<<4, count x*y"
+0x002a5d88,sceMpegReset,low,"[guess] zeroes decoder state, resets IPU DMA helper and buffers; also called by sceMpegCreate"
+0x002a5e40,sceMpegAddCallback,medium,"(mp,type,cb,arg) stores cb/arg at mp->priv+0xc+type*0xc and returns previous cb; dispatcher 0x2a5e78 reads same table"
+0x002a6080,_sceMpegGetPictureCommon,medium,[fix of symbols.csv sceMpegGetPicture] shared body called by the 3 public GetPicture variants; owns the abort/alignment strings
+0x002ace00,sceIpuSync,high,"(mode) 0 busy-waits IPU_CTRL.BUSY, 1 returns busy bit"
+0x002acee0,sceIpuInit,high,"stops ch4, IPU_CTRL=0x40000000 reset, loads VLC tables through IPU_IN_FIFO (0x10007010), BCLR/SETIQ/SETVQ/FDEC commands"
+0x002adc60,sceCdSync,high,"(mode) 0: DelayThread(4000) loop until sceSifCheckStatRpc(NCmd client 0x411850)==0, else polls; game loader 0x194b14 polls it"
+0x002add00,sceCdSyncS,high,same for S-cmd RPC client 0x412200
+0x002ae670,sceCdGetReadPos,medium,"returns running sector counter (uncached 0x411840) only while last cmd==1 (read), else 0"
+0x002aeb98,sceCdStInit,medium,"stream cmd 5 via generic 0x2aef10, a0..a2 forwarded (bufmax,bankmax,iop_buf)"
+0x002aebc8,sceCdStStart,high,"stream cmd 1 (lsn, mode*); the symbols.csv sceCdStStart at 0x2aef10 is the generic command sender"
+0x002aec00,sceCdStSeekF,medium,stream cmd 9 (lsn)
+0x002aec30,sceCdStSeek,medium,stream cmd 4 (lsn)
+0x002aec60,sceCdStStop,high,"stream cmd 3, clears stream-active flag 0x412234"
+0x002aef10,_sceCdStreamCmd,medium,"[fix of symbols.csv sceCdStStart] 5-arg generic sender (a0..a2,cmd,modeptr) for NCmd 0xf + RPC fn 9, used by StStart/StStop/StSeek/StInit/StStat/StPause/StResume/StRead"
+0x002af1d0,sceSdRemote,medium,"(async,fn,args...) copies up to 6 args to 0x5d1a00 block and sceSifCallRpc on client 0x5d1a40 bound by sceSdRemoteInit (id 0x80000701); fn ids 0x8160/0x8170 special-cased"
+0x002afcd0,sceMcOpen,high,"mcserv RPC fn 2 with (port,slot,name,mode) strncpy name, stores cmd=2 for sceMcSync; async callback 0x2afb38"
+0x002afdf8,sceMcMkdir,high,calls Open then sets last cmd=0xb (MkDir)
+0x002afe30,sceMcClose,high,"mcserv RPC fn 3 with fd, cmd=3"
+0x002afef0,sceMcSeek,high,"mcserv RPC fn 4 (fd,offset,origin), cmd=4"
+0x002b0068,sceMcRead,high,"mcserv RPC fn 5 (fd,buf,size) with SyncDCache of buf, cmd=5"
+0x002b0180,sceMcWrite,high,"mcserv RPC fn 6 (fd,buf,size) with FlushCache, cmd=6"
+0x002b02f8,sceMcSync,high,"(mode,*cmd,*result): PollSema/WaitSema on sync sema 0x412290, returns cmd 0x412288 and result 0x5d4100, 6 game callers + sceMcInit"
+0x002b0418,sceMcGetInfo,high,"mcserv RPC fn 1 (port,slot,type*,free*,format*), cmd=1"
+0x002b0608,sceMcGetDir,medium,"mcserv RPC fn 0xd, strncpy name, cmd=0xd (no game callers)"
+0x002b0928,sceMcFormat,medium,"mcserv RPC fn 0x10 (port,slot), cmd=0x10; game caller 0x1df56c"
+0x002b09f8,sceMcDelete,medium,"mcserv RPC fn 0xf (port,slot,name), cmd=0xf"
+0x002b0b18,sceMcFlush,medium,"mcserv RPC fn 10 (fd), cmd=10"
+0x002b0bd8,sceMcSetFileInfo,medium,"mcserv RPC fn 0xe (port,slot,name,info*,flags&7) copies 64-byte info; cmd=0xe"
+0x002b0da8,sceMcRename,medium,"mcserv RPC fn 0xe (port,slot,old,new) flags 0x10, cmd=0x13"
+0x002b0f08,sceMcUnformat,medium,"mcserv RPC fn 0x11 (port,slot), cmd=0x11"
+0x002b0fd8,sceMcGetEntSpace,medium,"mcserv RPC fn 0x12 (port,slot,path), cmd=0x12; game caller 0x1de048"
+0x002c3db0,free_r,high,[rename of _free_r] runtime list name has no underscore
+0x002c40a8,malloc_trim_r,medium,"__malloc_lock, computes releasable top pages, sbrk(-n) via 0x2c65b8; only caller _free_r"
+0x002c4a40,malloc_extend_top,medium,"calls sbrk helper 0x2c65b8 with size+top_pad (0x412ec0), page-aligned; only caller _malloc_r"
+0x002c4c98,malloc_r,high,[rename of _malloc_r] runtime list name has no underscore
+0x002c5878,printf_r,high,[rename of _printf_r] runtime list name has no underscore
+0x002c69f8,sprintf,high,"fake FILE (flags 0x208, size 0x7fffffff) on dest buffer, spills a2..a7 varargs, vfprintf, NUL terminate; 24 callers"
+0x002cb2b8,vsprintf,medium,"same string FILE setup, takes (buf,fmt,va_list) and calls vfprintf"
+0x002ce2b8,calloc_r,high,[rename of _calloc_r] runtime list name has no underscore
+0x002ce370,realloc_r,high,"(reent,ptr,n): ptr==0 -> _malloc_r, locks, grows in place/copy+free (newlib mallocr)"
+0x002d5db8,sceSifAllocIopHeap,high,IOP heap RPC client 0x5d8480 fn 1 (size) returns address; ezSound_Init prints 'sceSifAllocIopHeap(0x28000) address:' right after calling it
+0x002d5ea8,sceSifFreeIopHeap,medium,IOP heap RPC fn 2 (addr) returns 0/-1; thin wrapper at 0x2d5f20
+0x002d5f40,sceSifLoadIopHeap,medium,"IOP heap RPC fn 3 (path string up to 0xfb, addr)"
