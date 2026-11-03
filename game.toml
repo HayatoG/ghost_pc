@@ -25,3 +25,99 @@ args = ["{elf}"]
 # Padrões do runtime; sobrescreva por linha de comando (--fps, --pad-script, --fps-log).
 PS2X_TARGET_FPS = "60"
 
+# Arquivos conhecidos da edicao Europe (nome, tamanho, sha256): gerados por `ps2launch hashes`.
+# Sao so metadados nossos (nenhum byte do jogo). `verify` confere os tamanhos; `verify --deep`, os hashes.
+[[dump.file]]
+name = "SYSTEM.CNF"
+size = 56
+sha256 = "7e3293050de7ca80cb3e474a5f414d6951d8f10ddd72bdefcec7f856fde17663"
+
+[[dump.file]]
+name = "SLES_530.20"
+size = 3742404
+sha256 = "9ddec62618d6770261ae87cb53eec04552d8f67ba794e3c5e8689b7523e258f7"
+
+[[dump.file]]
+name = "MODULES/CDVDSTM.IRX"
+size = 34705
+sha256 = "f14f52364e62ac4be33b17040b2b17c6451cdf08470fd67aa7bc0a2b4230cc6c"
+
+[[dump.file]]
+name = "MODULES/EZSOUND.IRX"
+size = 12041
+sha256 = "63eec8ec8af6b763783d9f07eabfe50ab4f5db0c308bc449340ebcf6904f453c"
+
+[[dump.file]]
+name = "MODULES/IOPRP280.IMG"
+size = 269889
+sha256 = "58e8ddcf97b494600bac8df81397a0b51f6dea1eacfc242d56fe2cfdc8339916"
+
+[[dump.file]]
+name = "MODULES/LIBSD.IRX"
+size = 28605
+sha256 = "ab999ee7e9569ebbb7e6214b56e61bee389bff8503ffe668c3bde45a8f701115"
+
+[[dump.file]]
+name = "MODULES/MCMAN.IRX"
+size = 95909
+sha256 = "4b88925b424623c6ab7d8a43316be2a3e48db33ca84f93c92dbe39ca27f84beb"
+
+[[dump.file]]
+name = "MODULES/MCSERV.IRX"
+size = 7417
+sha256 = "52082da17cf3278de8ee2963dd4e07027ea30eac23e04863091d9522317755d2"
+
+[[dump.file]]
+name = "MODULES/MTAPMAN.IRX"
+size = 11029
+sha256 = "d167471deb2a35844fabb189dbc6792f325cc57fbae3a1baf5e20241ddd644f4"
+
+[[dump.file]]
+name = "MODULES/PADMAN.IRX"
+size = 43813
+sha256 = "1e3c03029df95e86d99aa9f883492e16b21043fdc7d480762f9c589819e0301c"
+
+[[dump.file]]
+name = "MODULES/SDRDRV.IRX"
+size = 9161
+sha256 = "b9407103027d365f33fdc6024da37e0ed898a380583d38c17aaf13e9e325d149"
+
+[[dump.file]]
+name = "MODULES/SIO2MAN.IRX"
+size = 6641
+sha256 = "8d9513cc55b05578b0bad1e10b89df3a6fcab2798f45f028e50e6889c6ea93d1"
+
+[[dump.file]]
+name = "IMAGE.BIN"
+size = 314607616
+sha256 = "4678b89aa2786c777d51ef49d84f97a87f86f7cafed5c146778931ae365fe3a2"
+
+[[dump.file]]
+name = "BGM.BIN"
+size = 130805760
+sha256 = "8c7cf891d2e2e4c75f57e9810f8a2f5f8c5ee53786e0f4459787cf24a2fff27a"
+
+[[dump.file]]
+name = "RTDEN2EU.BIN"
+size = 143204352
+sha256 = "d7f8a7692e03b2f39751cc5d7aceec9a83ea9e1e210c5255d058cca4189f3ea9"
+
+[[dump.file]]
+name = "MOV00EUS.BIN"
+size = 448512
+sha256 = "3e811b79582c1c9ae732676fb380b5d2aeed907078f1b71e70d61620595032e4"
+
+[[dump.file]]
+name = "MOV00EU.BIN"
+size = 711755776
+sha256 = "82583d3923d2c6b678c7a5abbe692f41786718daecf610a61bcededdaaee16e3"
+
+[[dump.file]]
+name = "MOV01EU.BIN"
+size = 860129280
+sha256 = "c6e9819f3b58c2568147622650041758e65e186f566e24c54067a40253a617dc"
+
+[[dump.file]]
+name = "MOV02EU.BIN"
+size = 667688960
+sha256 = "ab67a0acd125e975b4f432e4f071c38b5276b7b4a1f776ac4eea2f992d1430d2"
