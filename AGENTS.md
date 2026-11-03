@@ -56,6 +56,9 @@ python -I ../tools/iop_modules.py work/MODULES --json logs/iop_modules.json
 - [x] Módulos IOP catalogados (`docs/iop-modules.md`).
 - [x] Nomes do SDK: 168 funções em `docs/symbols.csv` (alta/média/baixa confiança); aplicados também no projeto headless `work/ghidra_project`.
 - [x] Os `.BIN` grandes usam um contêiner `fpk` (magic `fpk\0`, tabela de entradas com offset/tamanho alinhados a 0x800) — parser e doc em andamento (`tools/fpk.py`, `docs/fpk-format.md`).
+- [x] **O jogo roda no port (03/11, ~05:20)**: boot do IOP, `fioInit`/CD ok, interrupções de DMA ok (latch), display configurado, **menu de idioma e abertura hexagonal desenhados**, **gamepad virtual funcional** (o pad anuncia DualShock). Sem alvos ausentes após a varredura de ponteiros (349 funções novas). Ver `docs/ps2recomp-spike.md` (rodadas 3–6) e `docs/gs-optimization.md`.
+- [x] Desempenho medido (relógio do jogo vs. 50 Hz PAL): menu ~81% (era 42%), telas intermediárias 61–68%, **cena hexagonal 46%** (22,9 Hz). Gargalo = rasterizador de GS em software (98% do tempo da `GameThread`); código recompilado <0,5%.
+- [ ] Otimizar o GS na cena hexagonal (meta ≥35 Hz, ideal 50); depois explorar as telas seguintes com o pad virtual (`pad_scripts/explore2.txt`) e tratar novos "muros" (ciclo: `tools/recomp_cycle.ps1 -PointerScan`, `PS2X_MISSING_LOG`).
 - [ ] Decompilar `EZSOUND.IRX` (middleware da Cavia) e confirmar ordem de carga dos módulos por xref (em andamento: `docs/iop-boot.md`).
 - [ ] Spike do PS2Recomp: exportação pronta (`work/recomp/ghost.toml`), **compilação pausada**; ver `docs/ps2recomp-spike.md`.
 - Atenção: um agente atribuiu a engine à "Sega/Production I.G."; **não confirmado** (a pesquisa aponta a Cavia como desenvolvedora). Namespaces vistos nas strings: `abes` (cena, partículas, câmera) e `Stacom` (jogo).

@@ -88,9 +88,58 @@ SampleTexture+lambda 22 %, lerpChannel 7,9 %, bitsPerPixel 4,2 % etc.
 - Só uma captura de regressão (menu de idioma); caminhos não exercitados por ela (fog, DATE,
   AFAIL, CLUT CSM2, Z24/Z32) foram portados linha a linha, mas não têm teste de imagem.
 
+## Fase 2 — cena hexagonal da abertura (05:20–05:50)
+
+Medição com o binário da fase 1 (sem mudanças de código nesta fase):
+`launcher run --pad-script ghost_pc/pad_scripts/explore2.txt --fps-log ghost_pc/logs/hex_base.csv
+--timeout 200`. Nesta corrida a cena hexagonal (captura `logs/shots_hex_base/s06.png`: hexágonos
+ciano nítidos sobre ruído ciano/laranja) só entra por volta de t≈182 s e fica estável em
+**~23,9 Hz de relógio de jogo / ~24 FPS no host** (t 183–199 s). Antes dela: t≈139–151 s ~36 Hz
+de jogo (host 18 FPS), t≈167–178 s 12,4 Hz (outra fase pesada da intro).
+Atenção: com `--timeout 200` a cena mal aparece; para medir 60 s nela use `--timeout 260` ou mais.
+
+Perfil (PS2X_PROFILE_DELAY=130, 25 s, pad explore2): `DrawSprite` 53,9 %, **`DrawTriangle` 40,8 %**,
+leitor PSMT4 genérico 1,4 %, `NotifyWrite` 0,8 % (não foi inlinado), `WriteP4` 0,6 %. (Esta
+amostra rodou em paralelo com outra instância do jogo; as porcentagens relativas valem, o tempo
+absoluto não.)
+
+**Nenhuma mudança de código foi entregue nesta fase.** No prazo de ~25 min, cada ciclo
+(build 2 min + regressão do menu 1 min + corrida até a cena ~3,5 min) só permitia uma tentativa,
+e as candidatas bit-exatas que cabiam (templates por combinação de modos, LUT do alpha test,
+`NotifyWrite` inline) teriam ganho estimado de 2–10 %, longe da meta de 35 Hz, sem tempo de
+validar. Preferi não deixar código não medido na árvore: o estado atual é o da fase 1
+(regressão do menu OK).
+
+O que provavelmente leva a cena a ≥ 35 Hz (por ordem de ganho esperado):
+1. **Paralelismo por bandas de linhas** dentro de cada primitiva grande (16 núcleos). Para ser
+   bit-exato: só quando as páginas de FRAME/ZBUF da primitiva não se sobrepõem às páginas da
+   textura (então o cache de página nunca vê escrita relevante e cada thread pode usar leitura
+   direta da VRAM); cada pixel é independente dentro de uma primitiva (sprite/triângulo não
+   escrevem o mesmo pixel duas vezes), então bandas disjuntas dão a mesma VRAM final. Juntar as
+   threads ao fim de cada primitiva preserva a ordem entre primitivas.
+2. **Triângulo por varredura de linhas com o mesmo teste**: hoje a caixa envolvente inteira é
+   testada pixel a pixel; dá para manter o teste exato (mesmas expressões em float) e só pular o
+   trabalho de cor/textura/escrita, que já é o que acontece — o ganho real vem de especializar o
+   laço por (tme, iip, fst, bilinear, blend, z) com templates.
+3. Leitores inline para PSMT4/PSMT8 (CLUT) como já feito para CT32.
+
 ## Próximos passos sugeridos
 
 - A fase de logos/intro (~18 Hz) merece um perfil próprio.
 - Especializar o laço de sprite por linha (parte do endereço dependente de y constante por linha;
   alpha test por tabela de 256 entradas) e templates por combinação (sem Z / sem blend).
 - Paralelismo por bandas com verificação de não-sobreposição textura/FRAME/ZBUF por primitiva.
+
+## Fase 3 (agente pai, 05:30): experimento negativo — LTCG só no runtime
+- **Hipótese:** o rasterizador está na biblioteca `ps2_runtime` (~30 arquivos); ligar `/GL` + `/LTCG` só nela (o código gerado, que estourava a pilha do compilador sob LTCG, ficaria de fora) permitiria inlining entre arquivos.
+- **Resultado:** build em 2 min, sem estouro de pilha, saída **byte-idêntica** (MD5 `B7953D5ACC553BDF82402D1733F953D2`), mas **sem ganho**: 34,9 e 34,3 Hz do relógio do jogo contra 34,6 Hz sem LTCG (ruído). O custo está no trabalho por pixel, não em chamadas entre arquivos.
+- **Decisão:** revertido (configuração mais simples, mesmo desempenho). Os próximos ganhos têm de vir de algoritmo: especializar `DrawSprite`/`DrawTriangle` por combinação de modos, SIMD de vários pixels por vez e, só com prova de saída idêntica, paralelismo por bandas.
+
+## Estado final desta janela (03/11, 05:36)
+| Cena | Relógio do jogo (alvo 50 Hz) |
+|---|---|
+| Menu de idioma (boot+logos incluídos), antes | 19,0 Hz (38%) |
+| Menu de idioma, depois | 34,7 Hz (69%) — média; o menu parado chega a ~40 Hz (81%) |
+| Tela parada logo após o idioma | 50,0 Hz (99,99%), 52 FPS no host |
+| Abertura hexagonal (a mais pesada medida) | ~23–24 Hz (46–48%) |
+Perfil da cena hexagonal (agente Opus): `DrawSprite` 53,9%, `DrawTriangle` 40,8%, resto <1,5%.

@@ -557,18 +557,19 @@ index 45cb9d2..4e3d065 100644
      if (gameThread.joinable())
      {
 diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
-index 589d768..8e5837c 100644
+index 589d768..09dd9bf 100644
 --- a/ps2xRuntime/CMakeLists.txt
 +++ b/ps2xRuntime/CMakeLists.txt
-@@ -9,6 +9,7 @@ option(PS2X_ENABLE_RUNNER_UNITY_BUILD "Build ps2EntryRunner with CMake unity bui
+@@ -9,7 +9,7 @@ option(PS2X_ENABLE_RUNNER_UNITY_BUILD "Build ps2EntryRunner with CMake unity bui
  set(PS2X_RUNNER_UNITY_BUILD_BATCH_SIZE 32 CACHE STRING "Unity build batch size for ps2EntryRunner")
  option(PS2X_ENABLE_RUNNER_PCH "Precompile the heavy runtime headers for ps2EntryRunner" ON)
  option(PS2X_ENABLE_SCCACHE "Use sccache as compiler launcher when available" ON)
+-
 +option(PS2X_ENABLE_LTCG "Whole-program optimization (/GL + /LTCG, IPO). OFF = fast link for dev/perf iteration" ON)
- 
  option(PS2X_ENABLE_RUNTIME_LOGS "Enable PS2 runtime logs" ON)
  option(PS2X_ENABLE_AGRESSIVE_LOGS "Enable very verbose/agressive PS2 runtime logs" ON)
-@@ -386,6 +387,9 @@ add_library(ps2_runtime STATIC
+ option(PS2X_ENABLE_IOP_RPC_TRACE "Log unhandled IOP/SIF RPC trace suggestions" ON)
+@@ -386,6 +386,9 @@ add_library(ps2_runtime STATIC
      src/lib/ps2_iop_host.cpp
      src/lib/ps2_memory.cpp
      src/lib/ps2_pad.cpp
@@ -578,7 +579,7 @@ index 589d768..8e5837c 100644
      src/lib/ps2_rom_device.cpp
      src/lib/ps2_vfs.cpp
      src/lib/ps2_runtime.cpp
-@@ -462,6 +466,12 @@ else()
+@@ -462,6 +465,12 @@ else()
      )
  endif()
  
@@ -591,7 +592,7 @@ index 589d768..8e5837c 100644
  if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
      set_target_properties(ps2EntryRunner PROPERTIES
          UNITY_BUILD ON
-@@ -469,6 +479,20 @@ if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
+@@ -469,6 +478,20 @@ if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
      )
  endif()
  
@@ -612,7 +613,7 @@ index 589d768..8e5837c 100644
  if(PS2X_ENABLE_RUNNER_PCH)
      set(PS2X_RUNNER_PCH_HEADERS
          "${CMAKE_CURRENT_SOURCE_DIR}/include/ps2_runtime_macros.h"
-@@ -577,6 +601,23 @@ if(MSVC)
+@@ -577,6 +600,23 @@ if(MSVC)
      target_link_options(ps2EntryRunner PRIVATE "/FORCE:MULTIPLE")
  endif()
  

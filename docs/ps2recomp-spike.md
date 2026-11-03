@@ -69,6 +69,12 @@ Status em 2026-11-03: **`ps2_recomp.exe` compilado** (`third_party/PS2Recomp/out
 - **Pad corrigido (causa raiz)**: `scePadInfoMode` agora anuncia `CUREXID=7` e uma tabela com 2 modos (digital e DualShock); o jogo chama `scePadSetMainMode(…,1,…)`, o pad passa a `0x73` e a conversão de entrada do jogo aceita os botões. **O menu reage ao gamepad virtual** (`CROSS` avança para a próxima tela; capturas distintas).
 - Com a tela seguinte (mais leve que o menu) o relógio do jogo ficou em **50,00 Hz (99,99% do tempo real)** e o host em 35 FPS médios — o alvo de 100% é atingido nessa cena; as cenas pesadas ainda dependem do GS.
 
+### Sexta rodada (05:00–05:25): varredura de ponteiros e primeira cena animada
+- **Ciclo 4** (`-PointerScan`): `CreateFunctionsFromPointers.java` achou 8699 alvos de ponteiros (dados 8628 + constantes 71): 5883 já eram funções, 2467 são rótulos internos (casos de `switch`) e **349 viraram funções novas** (incluindo `0x31b640`, onde o jogo travava com `missing-target`; é uma rotina de cópia com `lq`/`sq`). Sync incremental: 377 arquivos copiados, 255 órfãos removidos. Build completo ~13 min.
+- **Resultado**: sem nenhum alvo ausente; o jogo passa da tela pós-idioma, GIF sobe para 2694 transferências e aparece a **abertura com fundo hexagonal** (capturas de 280–290 KB).
+- **Desempenho por fase** (`explore3_fps.csv`, 192 s, GS já otimizado): boot+menu 26 Hz do jogo (53%); 12–120 s 30–34 Hz (61–68%); **cena hexagonal 22,9 Hz (46% do tempo real), host ~24 FPS** — a mais pesada medida. (Cena parada logo após o idioma: 50 Hz, 52 FPS.)
+- Segunda fase da otimização do GS (agente Opus retomado) mira a cena hexagonal; ver `gs-optimization.md`.
+
 ## Próximos passos
 0. Terminar o build 2; rodar `launcher run` com `--fps 0` para ver se o boot chega a desenhar algo e medir o FPS bruto.
 1. Compilar o C++ gerado (248 MB, 39 mil arquivos: usar unidade única/`single_file_output` ou build paralelo com cuidado de RAM) junto com `ps2xRuntime`.
