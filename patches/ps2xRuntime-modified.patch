@@ -727,7 +727,7 @@ index 92ef0d5..1578f6f 100644
  endfunction()
 \ No newline at end of file
 diff --git a/ps2xRuntime/src/lib/gs/gs_cpu_backend.cpp b/ps2xRuntime/src/lib/gs/gs_cpu_backend.cpp
-index f0ad507..b79d58a 100644
+index f0ad507..a835350 100644
 --- a/ps2xRuntime/src/lib/gs/gs_cpu_backend.cpp
 +++ b/ps2xRuntime/src/lib/gs/gs_cpu_backend.cpp
 @@ -1,4 +1,5 @@
@@ -736,8 +736,11 @@ index f0ad507..b79d58a 100644
  #include "runtime/gs/ps2_gs_common.h"
  #include "runtime/gs/ps2_gs_psmct16.h"
  #include "runtime/gs/ps2_gs_psmct32.h"
-@@ -12,11 +13,18 @@
+@@ -10,13 +11,21 @@
+ #include <algorithm>
+ #include <cmath>
  #include <cstdio>
++#include <cstdlib>
  #include <cstring>
  #include <fstream>
 +#include <immintrin.h>
@@ -755,7 +758,7 @@ index f0ad507..b79d58a 100644
  namespace
  {
      float fabsQ(float q)
-@@ -24,7 +32,7 @@ namespace
+@@ -24,7 +33,7 @@ namespace
          return (std::fabs(q) > 1.0e-8f) ? q : 1.0f;
      }
  
@@ -764,7 +767,7 @@ index f0ad507..b79d58a 100644
      {
          uint32_t r = ((c >> 0) & 0xFF) >> 3;
          uint32_t g = ((c >> 8) & 0xFF) >> 3;
-@@ -34,7 +42,7 @@ namespace
+@@ -34,7 +43,7 @@ namespace
          return (r | (g << 5) | (b << 10) | (a << 15));
      }
  
@@ -773,7 +776,7 @@ index f0ad507..b79d58a 100644
      {
          u32 r = ((c >> 0) & 0x1F) << 3;
          u32 g = ((c >> 5) & 0x1F) << 3;
-@@ -49,7 +57,7 @@ namespace
+@@ -49,7 +58,7 @@ namespace
          return static_cast<u32>(r) | (g << 8) | (b << 16) | (a << 24);
      }
  
@@ -782,7 +785,7 @@ index f0ad507..b79d58a 100644
      {
          if (psm == GS_PSM_CT32)
              return texel;
-@@ -101,7 +109,7 @@ namespace
+@@ -101,7 +110,7 @@ namespace
      std::atomic<uint32_t> s_debugContext1PrimitiveCount{0};
      std::atomic<uint32_t> s_debugFbp150PixelCount{0};
  
@@ -791,7 +794,7 @@ index f0ad507..b79d58a 100644
                                int textureSize,
                                uint8_t mode,
                                uint16_t regionMin,
-@@ -225,7 +233,7 @@ namespace
+@@ -225,7 +234,7 @@ namespace
          uint8_t a;
      };
  
@@ -800,7 +803,7 @@ index f0ad507..b79d58a 100644
                                          uint8_t vr,
                                          uint8_t vg,
                                          uint8_t vb,
-@@ -292,11 +300,70 @@ namespace
+@@ -292,11 +301,70 @@ namespace
          return psm == GS_PSM_T8 || psm == GS_PSM_T8H;
      }
  
@@ -873,7 +876,7 @@ index f0ad507..b79d58a 100644
      }
  }
  
-@@ -510,9 +577,30 @@ GSCpuBackend::GSCpuBackend()
+@@ -510,9 +578,30 @@ GSCpuBackend::GSCpuBackend()
              break;
          }
      }
@@ -904,7 +907,7 @@ index f0ad507..b79d58a 100644
  void GSCpuBackend::Initialize(uint8_t *vram, uint32_t vramSize)
  {
      if (vram && vramSize < GSMem::MEMORY_SIZE)
-@@ -548,6 +636,8 @@ void GSCpuBackend::Submit(const GSPrimitiveBatch &batch)
+@@ -548,6 +637,8 @@ void GSCpuBackend::Submit(const GSPrimitiveBatch &batch)
      std::lock_guard<std::mutex> lock(m_mutex);
      if (!m_vram || batch.vertexCount == 0u)
          return;
@@ -913,7 +916,7 @@ index f0ad507..b79d58a 100644
      DrawPrimitive(batch);
  }
  
-@@ -585,6 +675,8 @@ void GSCpuBackend::LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut)
+@@ -585,6 +676,8 @@ void GSCpuBackend::LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut)
          return;
      }
  
@@ -922,7 +925,7 @@ index f0ad507..b79d58a 100644
      LoadClutUnlocked(tex0, texclut);
  }
  
-@@ -647,9 +739,14 @@ void GSCpuBackend::TextureFlush()
+@@ -647,9 +740,14 @@ void GSCpuBackend::TextureFlush()
      m_texturePageCache.Invalidate();
  }
  
@@ -938,7 +941,7 @@ index f0ad507..b79d58a 100644
  }
  
  uint32_t GSCpuBackend::ReadVram(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y) const
-@@ -1159,6 +1256,563 @@ uint32_t GSCpuBackend::SampleTexture(const GSDrawState &state, float s, float t,
+@@ -1159,6 +1257,563 @@ uint32_t GSCpuBackend::SampleTexture(const GSDrawState &state, float s, float t,
             (static_cast<uint32_t>(a) << 24);
  }
  
@@ -1502,7 +1505,25 @@ index f0ad507..b79d58a 100644
  void GSCpuBackend::DrawSprite(const GSPrimitiveBatch &batch)
  {
      const GSDrawState &state = batch.state;
-@@ -1203,8 +1857,13 @@ void GSCpuBackend::DrawSprite(const GSPrimitiveBatch &batch)
+@@ -1169,10 +1824,13 @@ void GSCpuBackend::DrawSprite(const GSPrimitiveBatch &batch)
+     int ofx = ctx.xyoffset.ofx >> 4;
+     int ofy = ctx.xyoffset.ofy >> 4;
+ 
+-    int x0 = static_cast<int>(v0.x) - ofx;
+-    int y0 = static_cast<int>(v0.y) - ofy;
+-    int x1 = static_cast<int>(v1.x) - ofx;
+-    int y1 = static_cast<int>(v1.y) - ofy;
++    // GS sprite coverage is [ceil(x0), ceil(x1)) (pixel centres sit on integer coordinates), so an edge at
++    // 63.5 still covers pixel 63. Truncating instead leaves a 1px seam between adjacent strips; Ghost in the
++    // Shell draws its full-screen transitions as 64px strips with x1 = x0 + 63.5.
++    int x0 = static_cast<int>(std::ceil(v0.x)) - ofx;
++    int y0 = static_cast<int>(std::ceil(v0.y)) - ofy;
++    int x1 = static_cast<int>(std::ceil(v1.x)) - ofx;
++    int y1 = static_cast<int>(std::ceil(v1.y)) - ofy;
+     u32 z1 = static_cast<u32>(v1.z);
+ 
+     if (x0 > x1)
+@@ -1203,8 +1861,13 @@ void GSCpuBackend::DrawSprite(const GSPrimitiveBatch &batch)
  
      uint8_t r = v1.r, g = v1.g, b = v1.b, a = v1.a;
  
@@ -1516,7 +1537,7 @@ index f0ad507..b79d58a 100644
          const auto &tex = ctx.tex0;
          const int texW = state.textureWidth;
          const int texH = state.textureHeight;
-@@ -1250,11 +1909,11 @@ void GSCpuBackend::DrawSprite(const GSPrimitiveBatch &batch)
+@@ -1250,11 +1913,11 @@ void GSCpuBackend::DrawSprite(const GSPrimitiveBatch &batch)
                      const int fixedV = static_cast<int>((texVf * 16.0f) + 0.5f);
                      const uint16_t sampleU = static_cast<uint16_t>(clampInt(fixedU, 0, 0xFFFF));
                      const uint16_t sampleV = static_cast<uint16_t>(clampInt(fixedV, 0, 0xFFFF));
@@ -1530,7 +1551,7 @@ index f0ad507..b79d58a 100644
                  }
  
                  uint8_t tr = static_cast<uint8_t>(texel & 0xFF);
-@@ -1263,7 +1922,7 @@ void GSCpuBackend::DrawSprite(const GSPrimitiveBatch &batch)
+@@ -1263,7 +1926,7 @@ void GSCpuBackend::DrawSprite(const GSPrimitiveBatch &batch)
                  uint8_t ta = static_cast<uint8_t>((texel >> 24) & 0xFF);
  
                  const TextureCombineResult color = combineTexture(tex, r, g, b, a, tr, tg, tb, ta);
@@ -1539,7 +1560,7 @@ index f0ad507..b79d58a 100644
              }
          }
      }
-@@ -1271,8 +1930,11 @@ void GSCpuBackend::DrawSprite(const GSPrimitiveBatch &batch)
+@@ -1271,8 +1934,11 @@ void GSCpuBackend::DrawSprite(const GSPrimitiveBatch &batch)
      {
          for (int y = drawY0; y <= drawY1; ++y)
              for (int x = drawX0; x <= drawX1; ++x)
@@ -1552,7 +1573,7 @@ index f0ad507..b79d58a 100644
  }
  
  void GSCpuBackend::DrawTriangle(const GSPrimitiveBatch &batch)
-@@ -1311,6 +1973,12 @@ void GSCpuBackend::DrawTriangle(const GSPrimitiveBatch &batch)
+@@ -1311,6 +1977,12 @@ void GSCpuBackend::DrawTriangle(const GSPrimitiveBatch &batch)
      const float invAbsDenom = 1.0f / std::fabs(denom);
      constexpr float kEdgeEpsilon = 1.0e-4f;
  
@@ -1565,7 +1586,7 @@ index f0ad507..b79d58a 100644
      for (int y = minY; y <= maxY; ++y)
      {
          float py = static_cast<float>(y) + 0.5f;
-@@ -1367,7 +2035,7 @@ void GSCpuBackend::DrawTriangle(const GSPrimitiveBatch &batch)
+@@ -1367,7 +2039,7 @@ void GSCpuBackend::DrawTriangle(const GSPrimitiveBatch &batch)
                      iv = 0;
                  }
  
@@ -1574,7 +1595,7 @@ index f0ad507..b79d58a 100644
  
                  uint8_t tr = static_cast<uint8_t>(texel & 0xFF);
                  uint8_t tg = static_cast<uint8_t>((texel >> 8) & 0xFF);
-@@ -1388,9 +2056,12 @@ void GSCpuBackend::DrawTriangle(const GSPrimitiveBatch &batch)
+@@ -1388,9 +2060,12 @@ void GSCpuBackend::DrawTriangle(const GSPrimitiveBatch &batch)
              }
  
              const uint8_t fog = clampU8(static_cast<int>(v0.fog * w0 + v1.fog * w1 + v2.fog * w2));
@@ -1588,7 +1609,7 @@ index f0ad507..b79d58a 100644
  }
  
  void GSCpuBackend::DrawLine(const GSPrimitiveBatch &batch)
-@@ -1463,6 +2134,8 @@ void GSCpuBackend::DrawLine(const GSPrimitiveBatch &batch)
+@@ -1463,6 +2138,8 @@ void GSCpuBackend::DrawLine(const GSPrimitiveBatch &batch)
  void GSCpuBackend::BeginTransfer(const GSTransferCommand &command)
  {
      std::lock_guard<std::mutex> lock(m_mutex);
@@ -1597,7 +1618,7 @@ index f0ad507..b79d58a 100644
      m_transfer = command;
      m_transferState.x = command.trxpos.dsax;
      m_transferState.y = command.trxpos.dsay;
-@@ -1482,6 +2155,8 @@ void GSCpuBackend::UploadImage(const uint8_t *data, uint32_t sizeBytes)
+@@ -1482,6 +2159,8 @@ void GSCpuBackend::UploadImage(const uint8_t *data, uint32_t sizeBytes)
      std::lock_guard<std::mutex> lock(m_mutex);
      if (!data || sizeBytes == 0u || !m_vram || m_transferState.direction != 0u)
          return;
@@ -1606,7 +1627,7 @@ index f0ad507..b79d58a 100644
      if (m_transfer.trxreg.rrw == 0u || m_transfer.trxreg.rrh == 0u || m_transferState.totalPixels == 0u)
          return;
  
-@@ -1703,6 +2378,8 @@ uint32_t GSCpuBackend::ConsumeLocalToHostBytes(uint8_t *dst, uint32_t maxBytes)
+@@ -1703,6 +2382,8 @@ uint32_t GSCpuBackend::ConsumeLocalToHostBytes(uint8_t *dst, uint32_t maxBytes)
      std::memcpy(dst, m_localToHostBuffer.data() + m_localToHostReadPos, count);
      m_localToHostReadPos += count;
      m_transferState.localToHostPendingBytes = m_localToHostBuffer.size() - m_localToHostReadPos;
@@ -1615,7 +1636,7 @@ index f0ad507..b79d58a 100644
      return static_cast<uint32_t>(count);
  }
  
-@@ -1847,6 +2524,8 @@ PresentationFrame GSCpuBackend::Present(const GSPresentationRequest &request)
+@@ -1847,6 +2528,8 @@ PresentationFrame GSCpuBackend::Present(const GSPresentationRequest &request)
  {
      // Snapshot local memory under the backend lock, then perform the expensive
      // display conversion without holding the producer-side raster lock.
@@ -1869,3 +1890,81 @@ index 9281d5f..d7aff81 100644
      m_backend->Initialize(vram, vramSize);
      reset();
  }
+diff --git a/ps2xRuntime/src/lib/Kernel/Syscalls/Sync.cpp b/ps2xRuntime/src/lib/Kernel/Syscalls/Sync.cpp
+index 33945fc..98c92a0 100644
+--- a/ps2xRuntime/src/lib/Kernel/Syscalls/Sync.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Syscalls/Sync.cpp
+@@ -1,6 +1,12 @@
+ #include "Common.h"
+ #include "Sync.h"
+ #include "runtime/ee_scheduler.h"
++#include <cstdio>
++#include <cstdlib>
++#include <map>
++#include <mutex>
++#include <string>
++#include <utility>
+ 
+ namespace ps2_syscalls
+ {
+@@ -12,6 +18,24 @@ namespace ps2_syscalls
+         constexpr uint32_t WEF_MODE_MASK = WEF_OR | WEF_CLEAR | WEF_CLEAR_ALL;
+         constexpr uint32_t EA_MULTI = 0x02u;
+ 
++        // PS2X_SEMA_TRACE=1: logs semaphore calls (id, pc, ra). Per (op,id) only the first
++        // kTraceDetail events are printed in full; later ones are counted and summarised every
++        // kTraceSummaryEvery events, so a long run keeps a small, readable log.
++        void semaTrace(const char *op, int id, const R5900Context *ctx)
++        {
++            static const bool enabled = std::getenv("PS2X_SEMA_TRACE") != nullptr;
++            if (!enabled)
++                return;
++            constexpr uint32_t kTraceDetail = 40u;
++            constexpr uint32_t kTraceSummaryEvery = 2000u;
++            static std::mutex mutex;
++            static std::map<std::pair<std::string, int>, uint32_t> counts;
++            std::lock_guard<std::mutex> lock(mutex);
++            const uint32_t n = ++counts[{op, id}];
++            if (n <= kTraceDetail || n % kTraceSummaryEvery == 0u)
++                std::fprintf(stderr, "[sema] %s id=%d n=%u pc=0x%x ra=0x%x\n", op, id, n, ctx->pc, getRegU32(ctx, 31));
++        }
++
+         EeScheduler &scheduler(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+         {
+             EeScheduler &result = runtime->eeScheduler();
+@@ -36,6 +60,7 @@ namespace ps2_syscalls
+                                  bool interruptSafe)
+         {
+             EeScheduler &ee = scheduler(rdram, ctx, runtime);
++            semaTrace(interruptSafe ? "iSignal" : "Signal", static_cast<int>(getRegU32(ctx, 4)), ctx);
+             const int result = ee.signalSemaphore(static_cast<int>(getRegU32(ctx, 4)), interruptSafe);
+             setReturnS32(ctx, result);
+             ee.transferIfRequested(interruptSafe);
+@@ -78,12 +103,13 @@ namespace ps2_syscalls
+ 
+         // ee_sema_t from ps2sdk. The IOP attr/option/init/max ordering is not
+         // accepted by the EE runtime.
+-        setReturnS32(ctx,
+-                     scheduler(rdram, ctx, runtime)
+-                         .createSemaphore(param->init_count,
+-                                          param->max_count,
+-                                          param->attr,
+-                                          param->option));
++        const int id = scheduler(rdram, ctx, runtime)
++                           .createSemaphore(param->init_count,
++                                            param->max_count,
++                                            param->attr,
++                                            param->option);
++        semaTrace("Create", id, ctx);
++        setReturnS32(ctx, id);
+     }
+ 
+     void DeleteSema(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+@@ -108,6 +134,7 @@ namespace ps2_syscalls
+ 
+     void WaitSema(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+     {
++        semaTrace("Wait", static_cast<int>(getRegU32(ctx, 4)), ctx);
+         scheduler(rdram, ctx, runtime).waitSemaphore(static_cast<int>(getRegU32(ctx, 4)));
+     }
+ 

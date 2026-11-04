@@ -7,6 +7,10 @@
 
 namespace
 {
+    // Must match the host frame buffer of GSCpuBackend (gs_cpu_backend.cpp).
+    constexpr uint32_t kHostFrameWidth = 640u;
+    constexpr uint32_t kHostFrameHeight = 512u;
+
     constexpr double kStatsPeriodSeconds = 10.0;
 }
 
@@ -100,12 +104,15 @@ void GSGpuBackend::PresentOnGpu(const PresentationFrame &frame)
         return;
     }
 
+    // The reference backend returns a fixed host buffer (kHostFrameWidth x kHostFrameHeight, row stride
+    // kHostFrameWidth); frame.width/height only describe the valid top-left rectangle inside it.
+    // Upload the whole buffer with its real pitch and let PresentTexture crop the valid region.
     const Clock::time_point start = Clock::now();
-    if (!m_frameTexture || m_frameTexture->Width() != frame.width || m_frameTexture->Height() != frame.height)
+    if (!m_frameTexture || m_frameTexture->Width() != kHostFrameWidth || m_frameTexture->Height() != kHostFrameHeight)
     {
         gs_rhi::TextureDesc desc{};
-        desc.width = frame.width;
-        desc.height = frame.height;
+        desc.width = kHostFrameWidth;
+        desc.height = kHostFrameHeight;
         m_frameTexture = m_device->CreateTexture(desc);
         if (!m_frameTexture)
         {
@@ -114,9 +121,9 @@ void GSGpuBackend::PresentOnGpu(const PresentationFrame &frame)
         }
     }
 
-    const size_t needed = static_cast<size_t>(frame.width) * frame.height * 4u;
-    if (frame.pixels.size() < needed ||
-        !m_device->UpdateTexture(*m_frameTexture, frame.pixels.data(), frame.width * 4u) ||
+    const size_t needed = static_cast<size_t>(kHostFrameWidth) * kHostFrameHeight * 4u;
+    if (frame.pixels.size() < needed || frame.width > kHostFrameWidth || frame.height > kHostFrameHeight ||
+        !m_device->UpdateTexture(*m_frameTexture, frame.pixels.data(), kHostFrameWidth * 4u) ||
         !m_device->PresentTexture(*m_frameTexture, frame.width, frame.height))
     {
         // A failed present (e.g. minimized window) is not fatal; just skip this frame.

@@ -1,0 +1,30 @@
+# Exploracao longa: idioma ENGLISH e shots a cada 1500 quadros do host ate o aviso de autosave.
+700 CROSS
+760 -
+2200 shot a01
+3700 shot a02
+5200 shot a03
+6700 shot a04
+8200 shot a05
+9700 shot a06
+11200 shot a07
+12700 shot a08
+14200 shot a09
+15700 shot a10
+17200 shot a11
+18700 shot a12
+20200 shot a13
+21700 shot a14
+23200 shot a15
+24700 shot a16
+26200 shot a17
+27700 shot a18
+29200 shot a19
+30700 shot a20
+32200 shot a21
+33700 shot a22
+35200 shot a23
+36700 shot a24
+38200 shot a25
+39700 shot a26
+40500 quit
