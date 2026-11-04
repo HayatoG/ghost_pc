@@ -1,0 +1,2 @@
+# O patch precisa continuar byte a byte: mistura LF e CRLF.
+*.patch -text

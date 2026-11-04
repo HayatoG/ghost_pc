@@ -34,6 +34,15 @@ Com o relógio `guest`, o script avança com o jogo e não com a janela: uma cap
 
 O resumo (`[perf] frames=… avg_fps=… one_percent_low_fps=… guest_vsync_hz=… realtime_pct=…`) sai no stdout ao encerrar. `realtime_pct` = ritmo do relógio emulado / ritmo esperado; 100% = velocidade real, abaixo disso o código recompilado está mais lento que o EE.
 
+## Recompilador e `ghost.toml`
+O patch também cobre `ps2xRecomp` (VF0 constante, MMI, FPU, VU) e `ps2xIOP` (`HeapBase`). Para gerar o C++, aplique o patch em `third_party/PS2Recomp/ps2xRecomp`, compile o `ps2_recomp`, rode e restaure a base com `git checkout -- ps2xRecomp`.
+
+O `work/recomp/ghost.toml` não é versionado e precisa de `guest_prefixes = ["sceVu0", "cos", "sin", "tan", "log", "atan2", "sqrt", "__ieee754_", "__kernel_"]`, para essas funções rodarem do código do jogo em vez de stubs.
+
+O patch não inclui `ps2xRuntime/src/runner`, que é C++ gerado a partir do jogo.
+
+Rastreios de diagnóstico, ativados por variável de ambiente: `PS2X_GS_DUMP_VSYNC`, `PS2X_GS_DUMP_OUT`, `PS2X_GS_TRACE_PX`, `PS2X_GS_TRACE_PX_OUT`, `PS2X_MEMWATCH`, `PS2X_RPC_WATCH`, `PS2X_SEMA_TRACE`, `PS2X_GUEST_PROFILE`.
+
 ## Como reaplicar numa árvore nova
 A partir da raiz do repo, com `third_party/PS2Recomp` já clonado (testado: o patch passa em `git apply --check` sobre o original e em `-R --check` sobre a árvore de trabalho):
 ```

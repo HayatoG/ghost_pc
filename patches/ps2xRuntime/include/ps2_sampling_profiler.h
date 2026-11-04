@@ -2,6 +2,7 @@
 #define PS2_SAMPLING_PROFILER_H
 
 #include <atomic>
+#include <cstdint>
 #include <string>
 #include <thread>
 
@@ -15,6 +16,9 @@
 // PS2X_PROFILE_OUT (output path, default ps2_profile.txt). Windows only; elsewhere it is a no-op.
 namespace ps2_perf
 {
+    // PS2X_MEMWATCH: polls guest RAM words and reports who changes them.
+    void startMemWatch(void *threadHandle, const uint8_t *ram, std::atomic<uint32_t> *guestPc);
+
     class SamplingProfiler
     {
     public:

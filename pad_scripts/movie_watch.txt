@@ -1,0 +1,45 @@
+# Ate a abertura com CROSS/START; depois sem botoes (botao pula o video) e shots a cada 200 vsyncs.
+900 CROSS
+910 -
+1150 CROSS
+1160 -
+1400 CROSS
+1410 -
+1500 START
+1510 -
+1650 CROSS
+1660 -
+1900 CROSS
+1910 -
+2150 CROSS
+2160 -
+2400 CROSS
+2410 -
+2650 CROSS
+2660 -
+2900 CROSS
+2910 -
+3000 START
+3010 -
+3150 CROSS
+3160 -
+3400 CROSS
+3600 shot m03600
+3800 shot m03800
+4000 shot m04000
+4200 shot m04200
+4400 shot m04400
+4600 shot m04600
+4800 shot m04800
+5000 shot m05000
+5200 shot m05200
+5400 shot m05400
+5600 shot m05600
+5800 shot m05800
+6000 shot m06000
+6200 shot m06200
+6400 shot m06400
+6600 shot m06600
+6800 shot m06800
+7000 shot m07000
+7100 quit
