@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="464" viewBox="0 0 820 464" role="img" aria-labelledby="t d">
+<title id="t">vsync/s na cena 3D (eixo = vsync acumulado)</title><desc id="d">Alinha as corridas pelo progresso do jogo; a faixa cinza e a janela de medicao 7530-7640.</desc>
+<style>
+.t{font:600 18px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .s{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#6e7781}
+.l{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .v{font:600 13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a}
+.p{font:italic 12px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#8c959f}
+.ax{stroke:#8c959f;stroke-width:1} .gr{stroke:#8c959f;stroke-opacity:.25;stroke-width:1}
+.pend{fill:none;stroke:#8c959f;stroke-width:1.5;stroke-dasharray:5 4}
+@media (prefers-color-scheme: dark){.t,.l,.v{fill:#c9d1d9} .s,.p{fill:#8b949e}}
+</style>
+<text x="20.0" y="28.0" class="t" text-anchor="start" >vsync/s na cena 3D (eixo = vsync acumulado)</text>
+<text x="20.0" y="48.0" class="s" text-anchor="start" >Alinha as corridas pelo progresso do jogo; a faixa cinza e a janela de medicao 7530-7640.</text>
+<rect x="20.0" y="59.0" width="14" height="14" rx="3" fill="#0072B2"/>
+<text x="40.0" y="70.0" class="l" text-anchor="start" >baseline CPU</text>
+<rect x="132.4" y="59.0" width="14" height="14" rx="3" fill="#E69F00"/>
+<text x="152.4" y="70.0" class="l" text-anchor="start" >novo CPU</text>
+<rect x="216.0" y="59.0" width="14" height="14" rx="3" fill="#009E73"/>
+<text x="236.0" y="70.0" class="l" text-anchor="start" >novo CPU em thread</text>
+<rect x="371.6" y="59.0" width="14" height="14" rx="3" fill="#D55E00"/>
+<text x="391.6" y="70.0" class="l" text-anchor="start" >novo D3D11 ROV</text>
+<line x1="70.0" x2="796.0" y1="408.0" y2="408.0" class="gr"/>
+<text x="62.0" y="412.0" class="l" text-anchor="end" >0</text>
+<line x1="70.0" x2="796.0" y1="335.5" y2="335.5" class="gr"/>
+<text x="62.0" y="339.5" class="l" text-anchor="end" >20</text>
+<line x1="70.0" x2="796.0" y1="263.0" y2="263.0" class="gr"/>
+<text x="62.0" y="267.0" class="l" text-anchor="end" >40</text>
+<line x1="70.0" x2="796.0" y1="190.5" y2="190.5" class="gr"/>
+<text x="62.0" y="194.5" class="l" text-anchor="end" >60</text>
+<line x1="70.0" x2="796.0" y1="118.0" y2="118.0" class="gr"/>
+<text x="62.0" y="122.0" class="l" text-anchor="end" >80</text>
+<line x1="70.0" x2="70.0" y1="118" y2="408" class="ax"/>
+<line x1="70.0" x2="796.0" y1="408" y2="408" class="ax"/>
+<text x="62.0" y="108.0" class="s" text-anchor="end" >vsync/s</text>
+<line x1="70.0" x2="70.0" y1="408" y2="413" class="ax"/>
+<text x="70.0" y="428.0" class="s" text-anchor="middle" >7.300</text>
+<line x1="242.9" x2="242.9" y1="408" y2="413" class="ax"/>
+<text x="242.9" y="428.0" class="s" text-anchor="middle" >7.400</text>
+<line x1="415.7" x2="415.7" y1="408" y2="413" class="ax"/>
+<text x="415.7" y="428.0" class="s" text-anchor="middle" >7.500</text>
+<line x1="588.6" x2="588.6" y1="408" y2="413" class="ax"/>
+<text x="588.6" y="428.0" class="s" text-anchor="middle" >7.600</text>
+<line x1="761.4" x2="761.4" y1="408" y2="413" class="ax"/>
+<text x="761.4" y="428.0" class="s" text-anchor="middle" >7.700</text>
+<text x="433.0" y="450.0" class="s" text-anchor="middle" >vsync acumulado do guest</text>
+<rect x="467.6" y="118" width="190.1" height="290" fill="#8c959f" fill-opacity=".18"/>
+<text x="471.6" y="132.0" class="s" text-anchor="start" >janela 7530-7640</text>
+<path d="M90.8,208.8 L187.5,205.7 L306.9,160.2 L431.3,149.1 L484.9,295.6 L491.8,394.4 L495.3,400.8 L502.2,393.6 L505.6,400.8 L512.5,393.6 L516.0,400.8 L519.5,400.8 L526.4,393.5 L529.8,400.8 L533.3,400.8 L536.7,400.8 L540.2,400.8 L543.7,400.8 L547.1,400.8 L550.6,400.8 L557.5,393.5 L560.9,400.8 L567.9,393.5 L571.3,400.8 L578.2,393.5 L581.7,400.8 L588.6,393.5 L592.1,400.8 L599.0,393.8 L602.4,400.8 L609.3,393.9 L612.8,400.8 L619.7,393.5 L623.2,400.8 L628.4,397.1 L633.5,397.1 L637.0,400.8 L643.9,393.5 L647.4,400.8 L654.3,393.5 L657.7,400.8 L664.7,393.5 L668.1,400.8 L675.0,393.5 L678.5,400.8 L685.4,393.5 L688.9,400.8 L695.8,393.6 L699.2,400.8 L706.1,393.9 L709.6,400.8 L716.5,393.9 L720.0,400.8 L726.9,394.0 L730.3,400.8 L737.3,394.0 L740.7,400.8 L747.6,394.1 L751.1,400.8 L758.0,394.0 L761.5,400.8 L768.4,393.5 L771.8,400.8 L775.3,400.8 L782.2,393.5 L785.7,400.8 L792.6,393.5" fill="none" stroke="#0072B2" stroke-width="2" stroke-linejoin="round"/>
+<path d="M90.7,179.6 L180.6,219.5 L267.1,227.3 L353.5,226.8 L439.9,226.8 L486.6,310.1 L495.2,389.9 L505.6,386.3 L516.0,386.3 L526.4,386.2 L536.7,386.3 L547.1,386.2 L554.0,393.5 L560.9,393.5 L567.8,393.5 L576.5,389.9 L585.1,389.9 L595.5,386.3 L605.9,386.2 L616.2,386.2 L626.6,386.3 L637.0,386.3 L649.1,382.6 L661.2,383.4 L671.6,386.3 L678.5,393.5 L685.4,393.5 L692.3,393.5 L702.7,386.2 L711.3,389.9 L720.0,389.9 L730.3,386.3 L740.7,386.2 L751.1,387.1 L761.4,386.2 L771.8,386.3 L782.2,386.2 L792.6,386.3" fill="none" stroke="#E69F00" stroke-width="2" stroke-linejoin="round"/>
+<path d="M151.2,226.8 L237.7,227.9 L324.1,226.8 L412.3,223.1 L488.3,248.5 L512.5,363.7 L533.2,368.4 L552.3,369.2 L571.3,370.9 L592.0,366.5 L616.2,368.4 L640.4,368.4 L664.6,364.8 L683.6,368.7 L702.6,371.2 L726.9,360.9 L747.6,369.9 L766.6,369.4 L785.6,372.0" fill="none" stroke="#009E73" stroke-width="2" stroke-linejoin="round"/>
+<path d="M95.9,226.8 L182.4,226.8 L268.8,226.8 L355.2,226.8 L441.6,226.8 L483.1,321.0 L493.5,386.3 L503.8,386.3 L517.7,379.0 L528.1,386.3 L541.9,379.0 L555.7,379.0 L566.1,386.3 L579.9,379.0 L590.3,386.2 L600.7,386.2 L611.0,386.3 L621.4,386.2 L635.2,379.0 L645.6,386.3 L656.0,386.2 L669.8,379.0 L680.2,386.3 L694.0,379.0 L706.1,382.6 L718.2,382.6 L728.6,386.3 L740.7,382.6 L752.8,382.6 L763.1,386.3 L773.5,386.3 L787.3,379.0" fill="none" stroke="#D55E00" stroke-width="2" stroke-linejoin="round"/>
+</svg>

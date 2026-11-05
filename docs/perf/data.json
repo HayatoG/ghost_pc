@@ -1,0 +1,250 @@
+{
+  "meta": {
+    "jogo": "ghost_pc (SLES_530.20)",
+    "gerado_em": "2026-11-05 (rascunho com os dados disponiveis; numeros finais entram depois)",
+    "maquina": "Ryzen 7 5700X3D (8C/16T), 31,9 GB RAM, Windows 11; MSVC 14.44",
+    "janela_vsync": [7530, 7640],
+    "legenda_estado": {
+      "congelado": "baseline medido em 04/11 e nao repetido",
+      "medido": "medido em 05/11 (logs/final), maquina possivelmente carregada: valem as razoes",
+      "pendente": "depende da medicao final; entra null no grafico (marcador [PENDENTE])"
+    },
+    "regenerar": "powershell -NoProfile -File tools\\make_report.ps1   (a partir de ghost_pc)"
+  },
+
+  "fatos": [
+    {"id": "gameplay3d_antes", "valor": 2.96, "unidade": "vsync/s", "estado": "congelado", "fonte": "docs/gameplay-profile-2026-11-04.md (cena 3D; janelas 2,6-3,0; baseline congelado 2,96)"},
+    {"id": "gameplay3d_cpu_hoje", "valor": 5.39, "unidade": "vsync/s", "estado": "medido", "fonte": "logs/final/novo_cpu.csv (valor do lider; recalculo por interpolacao dos CSV da 6,06)"},
+    {"id": "gameplay3d_cputhread_hoje", "valor": null, "unidade": "vsync/s", "estado": "pendente", "fonte": "logs/final/novo_cputhread.csv: rodada incompleta (so ~9 s na janela; o recalculo preliminar da 12,1, nao confiavel)"},
+    {"id": "gameplay3d_d3d11_rov_hoje", "valor": 6.87, "unidade": "vsync/s", "estado": "medido", "fonte": "logs/final/novo_d3d11.csv (valor do lider; recalculo por interpolacao da 7,10)"},
+    {"id": "gameplay3d_vu1_nativo", "valor": null, "unidade": "vsync/s", "estado": "pendente", "fonte": "docs/vu1-native.md; falta rodada final"},
+    {"id": "gameplay3d_gs_hw", "valor": null, "unidade": "vsync/s", "estado": "pendente", "fonte": "docs/gs-gpu-stage2.md; renderer hw, falta rodada final"},
+    {"id": "gameplay3d_crt", "valor": null, "unidade": "vsync/s", "estado": "pendente", "fonte": "docs/postfx-crt.md; custo do pos-processamento CRT"},
+    {"id": "gameplay3d_vfs_cache", "valor": null, "unidade": "vsync/s", "estado": "pendente", "fonte": "docs/vfs-ram-cache.md; cache de VFS na RAM"},
+    {"id": "menu_antes", "valor": 40.5, "unidade": "Hz", "estado": "congelado", "fonte": "docs/gs-optimization.md (estagio anterior; regime estavel no menu de idioma, ~21 Hz no inicio)"},
+    {"id": "menu_hoje", "valor": null, "unidade": "Hz", "estado": "pendente", "fonte": "falta medir o menu com o build novo"},
+    {"id": "tempo_script_s", "valor": {"baseline_cpu": 289.3, "novo_cpu": 183.4, "novo_cputhread": 166.5, "novo_d3d11": 174.4}, "unidade": "s", "estado": "medido", "fonte": "ultima linha de t_s de logs/final/*.csv (vsync total 7714-7718 em todas)"},
+    {"id": "alvo_vsync", "valor": 50, "unidade": "Hz", "estado": "medido", "fonte": "PS2X_VIDEO_HZ=50 (PAL)"},
+
+    {"id": "host_rasterizador_pct", "valor": 52.1, "unidade": "% das amostras", "estado": "congelado", "fonte": "docs/gameplay-profile-2026-11-04.md secao 2 (21 708 amostras da thread do jogo)"},
+    {"id": "host_drawsprite_pct", "valor": 25.5, "unidade": "%", "estado": "congelado", "fonte": "idem"},
+    {"id": "host_drawtriangle_pct", "valor": 17.2, "unidade": "%", "estado": "congelado", "fonte": "idem"},
+    {"id": "host_vram_textura_pct", "valor": 8.1, "unidade": "%", "estado": "congelado", "fonte": "idem"},
+    {"id": "host_gs_resto_pct", "valor": 1.2, "unidade": "%", "estado": "congelado", "fonte": "idem"},
+    {"id": "host_vu1_pct", "valor": 31.7, "unidade": "%", "estado": "congelado", "fonte": "idem"},
+    {"id": "host_iop_pct", "valor": 5.3, "unidade": "%", "estado": "congelado", "fonte": "idem"},
+    {"id": "host_guest_pct", "valor": 2.5, "unidade": "%", "estado": "congelado", "fonte": "idem"},
+    {"id": "host_fora_modulo_pct", "valor": 5.7, "unidade": "%", "estado": "congelado", "fonte": "idem (kernel/ntdll; esperas)"},
+    {"id": "host_outros_pct", "valor": 8.4, "unidade": "%", "estado": "congelado", "fonte": "100 - (52,1+31,7+5,3+2,5): runtime EE 1,8 + VIF/GIF/DMA 0,4 + VU0 0,4 + fora do modulo 5,7 (arredondamento)"},
+    {"id": "host_depois", "valor": null, "unidade": "%", "estado": "pendente", "fonte": "perfil do host apos as mudancas (PS2X_PROFILE_SECONDS) ainda nao repetido"},
+
+    {"id": "vu1_speedup_min", "valor": 3.0, "unidade": "x", "estado": "medido", "fonte": "docs/vu1-optimization.md (harness; erro +-10%)"},
+    {"id": "vu1_speedup_max", "valor": 3.3, "unidade": "x", "estado": "medido", "fonte": "docs/vu1-optimization.md"},
+    {"id": "vu1_chamada_vazia", "valor": 8.8, "unidade": "x", "estado": "medido", "fonte": "docs/vu1-optimization.md"},
+    {"id": "raster_cpu_speedup", "valor": 2.04, "unidade": "x", "estado": "medido", "fonte": "docs/gs-raster-cpu.md (replay; 2294 -> 1122 unidades de tempo)"},
+    {"id": "fila_esperas_antes", "valor": 400000, "unidade": "esperas/10 s", "estado": "congelado", "fonte": "docs/gs-threading.md"},
+    {"id": "fila_esperas_depois", "valor": 280, "unidade": "esperas/10 s", "estado": "medido", "fonte": "docs/gs-threading.md (fila 1 MiB + histerese + lote)"},
+    {"id": "fila_vsync_corrida_antes", "valor": 26.4, "unidade": "vsync/s (corrida inteira)", "estado": "medido", "fonte": "docs/gs-threading.md (1 MiB + histerese + lote)"},
+    {"id": "fila_vsync_corrida_depois", "valor": 33.2, "unidade": "vsync/s (corrida inteira)", "estado": "medido", "fonte": "docs/gs-threading.md (32 MiB + histerese + lote; +26%)"},
+
+    {"id": "build_tocar_cpp_gs_antes", "valor": 14.6, "unidade": "s", "estado": "congelado", "fonte": "baseline de build (tocar 1 .cpp de gs)"},
+    {"id": "build_tocar_header_antes", "valor": 720, "unidade": "s", "estado": "congelado", "fonte": "docs/build-speedup.md 2.1 (12+ min; ultimo .ninja_log: 720 s no -j16)"},
+    {"id": "build_completo_antes", "valor": 750, "unidade": "s", "estado": "congelado", "fonte": "docs/build-speedup.md (~12,5 min, 1307 unidades unity)"},
+    {"id": "build_ram_cl_antes", "valor": 2.4, "unidade": "GB", "estado": "congelado", "fonte": "docs/build-speedup.md (pico por cl.exe)"},
+    {"id": "build_ram_cl_dev", "valor": 0.5, "unidade": "GB", "estado": "medido", "fonte": "docs/build-speedup.md 2.4 (arvore /Od; so para iterar)"},
+    {"id": "build_editar_header_depois", "valor": 34.6, "unidade": "s", "estado": "medido", "fonte": "medicao do lider: 42 passos, 0 unidades do runner (prelude leve)"},
+    {"id": "build_tocar_cpp_gs_depois", "valor": null, "unidade": "s", "estado": "pendente", "fonte": "nao remedido"},
+    {"id": "build_completo_depois", "valor": null, "unidade": "s", "estado": "pendente", "fonte": "rebuild completo com o prelude: falta medir"},
+
+    {"id": "cpu_pct_medio", "valor": null, "unidade": "% de 16 threads", "estado": "pendente", "fonte": "tools/perf_run.ps1 -> logs/perf/<tag>.summary.json"},
+    {"id": "ram_pico", "valor": null, "unidade": "MB", "estado": "pendente", "fonte": "idem"},
+    {"id": "gpu_pct_medio", "valor": null, "unidade": "%", "estado": "pendente", "fonte": "idem (contadores GPU Engine)"},
+    {"id": "teste_ferramenta_perf_run", "valor": null, "unidade": "", "estado": "medido", "fonte": "rodada curta de 12-30 s so para provar a ferramenta (abertura, nao serve de medida): ~1,1 nucleo (7% de 16), 170 MB, thread do jogo ~83% de um nucleo"}
+  ],
+
+  "charts": [
+    {
+      "id": "fps-gameplay",
+      "type": "grouped_bars",
+      "title": "Gameplay 3D: vsync por segundo por configuracao",
+      "subtitle": "Janela de vsync acumulado 7530-7640; alvo 50 vsync/s. Quanto maior, melhor.",
+      "unit": "vsync/s",
+      "alt": "Barras: baseline 2,96; CPU hoje 5,39; D3D11 ROV 6,87; demais configuracoes pendentes de medicao; linha de alvo em 50.",
+      "categories": ["Baseline CPU", "CPU", "CPU em thread", "D3D11 ROV", "VU1 nativo", "GS hardware"],
+      "series": [{"name": "Gameplay 3D", "values": [2.96, 5.39, null, 6.87, null, null]}],
+      "reference": {"value": 50, "label": "alvo 50 Hz"},
+      "fonte": "fatos gameplay3d_*"
+    },
+    {
+      "id": "fps-cenas",
+      "type": "grouped_bars",
+      "title": "Antes e depois por cena",
+      "subtitle": "Menu de idioma (regime estavel) e gameplay 3D; 'Depois' = build CPU de hoje.",
+      "unit": "vsync/s",
+      "categories": ["Menu de idioma", "Gameplay 3D"],
+      "series": [
+        {"name": "Antes (baseline congelado)", "values": [40.5, 2.96]},
+        {"name": "Depois (CPU, hoje)", "values": [null, 5.39]}
+      ],
+      "reference": {"value": 50, "label": "alvo 50 Hz"},
+      "fonte": "fatos menu_antes, gameplay3d_antes, gameplay3d_cpu_hoje"
+    },
+    {
+      "id": "fps-serie-tempo",
+      "type": "lines",
+      "title": "vsync/s por segundo ao longo da corrida (relogio de parede)",
+      "subtitle": "Corrida inteira do pad script scene3d: logos, menu, abertura e gameplay 3D no fim.",
+      "unit": "vsync/s",
+      "x_label": "tempo de parede (s)",
+      "series": [
+        {"name": "baseline CPU", "csv": "logs/final/baseline_cpu.csv", "x": "t_s", "y": "guest_vsync_hz"},
+        {"name": "novo CPU", "csv": "logs/final/novo_cpu.csv", "x": "t_s", "y": "guest_vsync_hz"},
+        {"name": "novo CPU em thread", "csv": "logs/final/novo_cputhread.csv", "x": "t_s", "y": "guest_vsync_hz"},
+        {"name": "novo D3D11 ROV", "csv": "logs/final/novo_d3d11.csv", "x": "t_s", "y": "guest_vsync_hz"}
+      ],
+      "reference": {"value": 50, "label": "alvo 50 Hz"},
+      "fonte": "logs/final/*.csv"
+    },
+    {
+      "id": "fps-serie-vsync",
+      "type": "lines",
+      "title": "vsync/s na cena 3D (eixo = vsync acumulado)",
+      "subtitle": "Alinha as corridas pelo progresso do jogo; a faixa cinza e a janela de medicao 7530-7640.",
+      "unit": "vsync/s",
+      "x_mode": "vsync",
+      "xrange": [7300, 7720],
+      "band": [7530, 7640],
+      "band_label": "janela 7530-7640",
+      "x_label": "vsync acumulado do guest",
+      "series": [
+        {"name": "baseline CPU", "csv": "logs/final/baseline_cpu.csv", "x": "t_s", "y": "guest_vsync_hz"},
+        {"name": "novo CPU", "csv": "logs/final/novo_cpu.csv", "x": "t_s", "y": "guest_vsync_hz"},
+        {"name": "novo CPU em thread", "csv": "logs/final/novo_cputhread.csv", "x": "t_s", "y": "guest_vsync_hz"},
+        {"name": "novo D3D11 ROV", "csv": "logs/final/novo_d3d11.csv", "x": "t_s", "y": "guest_vsync_hz"}
+      ],
+      "fonte": "logs/final/*.csv"
+    },
+    {
+      "id": "host-composicao",
+      "type": "stacked_bars",
+      "title": "Onde o tempo do host vai na cena 3D (thread do jogo)",
+      "subtitle": "% das amostras do perfilador; 'Depois' exige repetir o perfil com o build novo.",
+      "unit": "%",
+      "categories": ["Antes (04/11)", "Depois"],
+      "series": [
+        {"name": "Rasterizador do GS", "values": [52.1, null]},
+        {"name": "VU1", "values": [31.7, null]},
+        {"name": "IOP", "values": [5.3, null]},
+        {"name": "Codigo guest", "values": [2.5, null]},
+        {"name": "Outros / fora do modulo", "values": [8.4, null]}
+      ],
+      "fonte": "docs/gameplay-profile-2026-11-04.md secao 2"
+    },
+    {
+      "id": "host-rasterizador",
+      "type": "hbars",
+      "title": "Antes: detalhe do custo do host (% das amostras)",
+      "subtitle": "Rasterizador do GS = DrawSprite + DrawTriangle + VRAM/textura + resto (52,1%).",
+      "unit": "%",
+      "groups": ["Rasterizador do GS", "Demais componentes"],
+      "items": [
+        {"label": "GSCpuBackend::DrawSprite", "value": 25.5, "group": "Rasterizador do GS"},
+        {"label": "GSCpuBackend::DrawTriangle", "value": 17.2, "group": "Rasterizador do GS"},
+        {"label": "VRAM e textura", "value": 8.1, "group": "Rasterizador do GS"},
+        {"label": "Resto do GS (uploads etc.)", "value": 1.2, "group": "Rasterizador do GS"},
+        {"label": "Interpretador VU1", "value": 31.7, "group": "Demais componentes"},
+        {"label": "IOP", "value": 5.3, "group": "Demais componentes"},
+        {"label": "Codigo guest recompilado", "value": 2.5, "group": "Demais componentes"},
+        {"label": "Fora do modulo (kernel, esperas)", "value": 5.7, "group": "Demais componentes"}
+      ],
+      "fonte": "docs/gameplay-profile-2026-11-04.md secao 2"
+    },
+    {
+      "id": "ganhos-por-mudanca",
+      "type": "hbars",
+      "title": "Ganho medido por mudanca (razao, maior e melhor)",
+      "subtitle": "Cada barra vem de um teste proprio (harness, replay ou corrida); nao se multiplicam.",
+      "unit": "x",
+      "groups": ["Harness ou replay isolado", "Corrida inteira"],
+      "items": [
+        {"label": "VU1 interpretador (minimo)", "value": 3.0, "group": "Harness ou replay isolado"},
+        {"label": "VU1 interpretador (maximo)", "value": 3.3, "group": "Harness ou replay isolado"},
+        {"label": "Rasterizador CPU (replay)", "value": 2.04, "group": "Harness ou replay isolado"},
+        {"label": "Fila cpu-thread: 26,4 -> 33,2", "value": 1.26, "group": "Corrida inteira"},
+        {"label": "VU1 nativo (gameplay)", "value": null, "group": "Corrida inteira"},
+        {"label": "GS por hardware (gameplay)", "value": null, "group": "Corrida inteira"}
+      ],
+      "fonte": "vu1-optimization.md, gs-raster-cpu.md, gs-threading.md"
+    },
+    {
+      "id": "build-tempos",
+      "type": "hbars",
+      "title": "Tempo de build (escala logaritmica)",
+      "subtitle": "Escala log: cada divisao e 10x. Menor e melhor.",
+      "unit": "s",
+      "scale": "log",
+      "groups": ["Antes", "Depois"],
+      "items": [
+        {"label": "Tocar 1 .cpp de gs", "value": 14.6, "group": "Antes"},
+        {"label": "Editar header comum", "value": 720, "group": "Antes"},
+        {"label": "Rebuild completo", "value": 750, "group": "Antes"},
+        {"label": "Tocar 1 .cpp de gs (depois)", "value": null, "group": "Depois"},
+        {"label": "Editar header comum (depois)", "value": 34.6, "group": "Depois"},
+        {"label": "Rebuild completo (depois)", "value": null, "group": "Depois"}
+      ],
+      "fonte": "build-speedup.md; medicao do lider (34,6 s)"
+    },
+    {
+      "id": "build-ram",
+      "type": "grouped_bars",
+      "title": "Pico de RAM por compilador (cl.exe)",
+      "subtitle": "Menor e melhor; a arvore /Od e so para iterar, nunca para medir FPS.",
+      "unit": "GB",
+      "categories": ["Pico por cl.exe"],
+      "series": [
+        {"name": "Build de desempenho (/O2)", "values": [2.4]},
+        {"name": "Build de desenvolvimento (/Od)", "values": [0.5]}
+      ],
+      "fonte": "build-speedup.md secoes 1 e 2.4"
+    },
+    {
+      "id": "tempo-script",
+      "type": "hbars",
+      "title": "Tempo de parede para executar o mesmo pad script (scene3d)",
+      "subtitle": "Mesma sequencia (cerca de 7715 vsync) do boot ate o fim da cena 3D. Menor e melhor.",
+      "unit": "s",
+      "groups": ["Antes", "Depois"],
+      "items": [
+        {"label": "Baseline CPU", "value": 289.3, "group": "Antes"},
+        {"label": "CPU", "value": 183.4, "group": "Depois"},
+        {"label": "CPU em thread (rodada a confirmar)", "value": 166.5, "group": "Depois"},
+        {"label": "D3D11 ROV", "value": 174.4, "group": "Depois"}
+      ],
+      "fonte": "ultima linha de t_s de logs/final/*.csv"
+    },
+    {
+      "id": "uso-cpu",
+      "type": "lines",
+      "title": "Uso de CPU do processo durante a corrida (% de 16 threads)",
+      "subtitle": "Amostra a cada 1 s por tools/perf_run.ps1; sem dados ate a rodada final.",
+      "unit": "%",
+      "x_label": "tempo de parede (s)",
+      "series": [
+        {"name": "CPU", "csv": "logs/perf/novo_cpu.cpu.csv", "x": "t_s", "y": "cpu_pct"},
+        {"name": "CPU em thread", "csv": "logs/perf/novo_cputhread.cpu.csv", "x": "t_s", "y": "cpu_pct"},
+        {"name": "D3D11 ROV", "csv": "logs/perf/novo_d3d11.cpu.csv", "x": "t_s", "y": "cpu_pct"}
+      ],
+      "fonte": "logs/perf/*.cpu.csv"
+    },
+    {
+      "id": "uso-ram-gpu",
+      "type": "grouped_bars",
+      "title": "Resumo de recursos por configuracao",
+      "subtitle": "CPU medio (% de 16 threads) por renderer; RAM e GPU entram no JSON de resumo.",
+      "unit": "% CPU",
+      "categories": ["CPU", "CPU em thread", "D3D11 ROV"],
+      "series": [{"name": "CPU medio", "values": [null, null, null]}],
+      "fonte": "logs/perf/*.summary.json"
+    }
+  ]
+}

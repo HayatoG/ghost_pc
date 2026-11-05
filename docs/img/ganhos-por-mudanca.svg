@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="338" viewBox="0 0 820 338" role="img" aria-labelledby="t d">
+<title id="t">Ganho medido por mudanca (razao, maior e melhor)</title><desc id="d">Cada barra vem de um teste proprio (harness, replay ou corrida); nao se multiplicam.</desc>
+<style>
+.t{font:600 18px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .s{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#6e7781}
+.l{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .v{font:600 13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a}
+.p{font:italic 12px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#8c959f}
+.ax{stroke:#8c959f;stroke-width:1} .gr{stroke:#8c959f;stroke-opacity:.25;stroke-width:1}
+.pend{fill:none;stroke:#8c959f;stroke-width:1.5;stroke-dasharray:5 4}
+@media (prefers-color-scheme: dark){.t,.l,.v{fill:#c9d1d9} .s,.p{fill:#8b949e}}
+</style>
+<text x="20.0" y="28.0" class="t" text-anchor="start" >Ganho medido por mudanca (razao, maior e melhor)</text>
+<text x="20.0" y="48.0" class="s" text-anchor="start" >Cada barra vem de um teste proprio (harness, replay ou corrida); nao se multiplicam.</text>
+<rect x="20.0" y="59.0" width="14" height="14" rx="3" fill="#0072B2"/>
+<text x="40.0" y="70.0" class="l" text-anchor="start" >Harness ou replay isolado</text>
+<rect x="226.0" y="59.0" width="14" height="14" rx="3" fill="#E69F00"/>
+<text x="246.0" y="70.0" class="l" text-anchor="start" >Corrida inteira</text>
+<line x1="300.0" x2="300.0" y1="98" y2="314" class="gr"/>
+<text x="300.0" y="330.0" class="s" text-anchor="middle" >0</text>
+<line x1="424.1" x2="424.1" y1="98" y2="314" class="gr"/>
+<text x="424.1" y="330.0" class="s" text-anchor="middle" >1</text>
+<line x1="548.2" x2="548.2" y1="98" y2="314" class="gr"/>
+<text x="548.2" y="330.0" class="s" text-anchor="middle" >2</text>
+<line x1="672.3" x2="672.3" y1="98" y2="314" class="gr"/>
+<text x="672.3" y="330.0" class="s" text-anchor="middle" >3</text>
+<text x="290.0" y="120.0" class="l" text-anchor="end" >VU1 interpretador (minimo)</text>
+<rect x="300.0" y="105" width="372.3" height="22" rx="3" fill="#0072B2"><title>VU1 interpretador (minimo): 3,00 x</title></rect>
+<text x="678.3" y="120.0" class="v" text-anchor="start" >3,00 x</text>
+<text x="290.0" y="156.0" class="l" text-anchor="end" >VU1 interpretador (maximo)</text>
+<rect x="300.0" y="141" width="409.5" height="22" rx="3" fill="#0072B2"><title>VU1 interpretador (maximo): 3,30 x</title></rect>
+<text x="715.5" y="156.0" class="v" text-anchor="start" >3,30 x</text>
+<text x="290.0" y="192.0" class="l" text-anchor="end" >Rasterizador CPU (replay)</text>
+<rect x="300.0" y="177" width="253.2" height="22" rx="3" fill="#0072B2"><title>Rasterizador CPU (replay): 2,04 x</title></rect>
+<text x="559.2" y="192.0" class="v" text-anchor="start" >2,04 x</text>
+<text x="290.0" y="228.0" class="l" text-anchor="end" >Fila cpu-thread: 26,4 -&gt; 33,2</text>
+<rect x="300.0" y="213" width="156.4" height="22" rx="3" fill="#E69F00"><title>Fila cpu-thread: 26,4 -&gt; 33,2: 1,26 x</title></rect>
+<text x="462.4" y="228.0" class="v" text-anchor="start" >1,26 x</text>
+<text x="290.0" y="264.0" class="l" text-anchor="end" >VU1 nativo (gameplay)</text>
+<rect x="300.0" y="249" width="129.0" height="22" rx="3" class="pend"/>
+<text x="310.0" y="264.0" class="p" text-anchor="start" >[PENDENTE]</text>
+<text x="290.0" y="300.0" class="l" text-anchor="end" >GS por hardware (gameplay)</text>
+<rect x="300.0" y="285" width="129.0" height="22" rx="3" class="pend"/>
+<text x="310.0" y="300.0" class="p" text-anchor="start" >[PENDENTE]</text>
+<line x1="300.0" x2="300.0" y1="98" y2="314" class="ax"/>
+</svg>

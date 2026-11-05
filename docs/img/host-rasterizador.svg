@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="410" viewBox="0 0 820 410" role="img" aria-labelledby="t d">
+<title id="t">Antes: detalhe do custo do host (% das amostras)</title><desc id="d">Rasterizador do GS = DrawSprite + DrawTriangle + VRAM/textura + resto (52,1%).</desc>
+<style>
+.t{font:600 18px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .s{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#6e7781}
+.l{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .v{font:600 13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a}
+.p{font:italic 12px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#8c959f}
+.ax{stroke:#8c959f;stroke-width:1} .gr{stroke:#8c959f;stroke-opacity:.25;stroke-width:1}
+.pend{fill:none;stroke:#8c959f;stroke-width:1.5;stroke-dasharray:5 4}
+@media (prefers-color-scheme: dark){.t,.l,.v{fill:#c9d1d9} .s,.p{fill:#8b949e}}
+</style>
+<text x="20.0" y="28.0" class="t" text-anchor="start" >Antes: detalhe do custo do host (% das amostras)</text>
+<text x="20.0" y="48.0" class="s" text-anchor="start" >Rasterizador do GS = DrawSprite + DrawTriangle + VRAM/textura + resto (52,1%).</text>
+<rect x="20.0" y="59.0" width="14" height="14" rx="3" fill="#0072B2"/>
+<text x="40.0" y="70.0" class="l" text-anchor="start" >Rasterizador do GS</text>
+<rect x="175.6" y="59.0" width="14" height="14" rx="3" fill="#E69F00"/>
+<text x="195.6" y="70.0" class="l" text-anchor="start" >Demais componentes</text>
+<line x1="300.0" x2="300.0" y1="98" y2="386" class="gr"/>
+<text x="300.0" y="402.0" class="s" text-anchor="middle" >0</text>
+<line x1="429.2" x2="429.2" y1="98" y2="386" class="gr"/>
+<text x="429.2" y="402.0" class="s" text-anchor="middle" >10</text>
+<line x1="558.4" x2="558.4" y1="98" y2="386" class="gr"/>
+<text x="558.4" y="402.0" class="s" text-anchor="middle" >20</text>
+<line x1="687.6" x2="687.6" y1="98" y2="386" class="gr"/>
+<text x="687.6" y="402.0" class="s" text-anchor="middle" >30</text>
+<text x="290.0" y="120.0" class="l" text-anchor="end" >GSCpuBackend::DrawSprite</text>
+<rect x="300.0" y="105" width="329.4" height="22" rx="3" fill="#0072B2"><title>GSCpuBackend::DrawSprite: 25,5 %</title></rect>
+<text x="635.4" y="120.0" class="v" text-anchor="start" >25,5 %</text>
+<text x="290.0" y="156.0" class="l" text-anchor="end" >GSCpuBackend::DrawTriangle</text>
+<rect x="300.0" y="141" width="222.2" height="22" rx="3" fill="#0072B2"><title>GSCpuBackend::DrawTriangle: 17,2 %</title></rect>
+<text x="528.2" y="156.0" class="v" text-anchor="start" >17,2 %</text>
+<text x="290.0" y="192.0" class="l" text-anchor="end" >VRAM e textura</text>
+<rect x="300.0" y="177" width="104.6" height="22" rx="3" fill="#0072B2"><title>VRAM e textura: 8,10 %</title></rect>
+<text x="410.6" y="192.0" class="v" text-anchor="start" >8,10 %</text>
+<text x="290.0" y="228.0" class="l" text-anchor="end" >Resto do GS (uploads etc.)</text>
+<rect x="300.0" y="213" width="15.5" height="22" rx="3" fill="#0072B2"><title>Resto do GS (uploads etc.): 1,20 %</title></rect>
+<text x="321.5" y="228.0" class="v" text-anchor="start" >1,20 %</text>
+<text x="290.0" y="264.0" class="l" text-anchor="end" >Interpretador VU1</text>
+<rect x="300.0" y="249" width="409.5" height="22" rx="3" fill="#E69F00"><title>Interpretador VU1: 31,7 %</title></rect>
+<text x="715.5" y="264.0" class="v" text-anchor="start" >31,7 %</text>
+<text x="290.0" y="300.0" class="l" text-anchor="end" >IOP</text>
+<rect x="300.0" y="285" width="68.5" height="22" rx="3" fill="#E69F00"><title>IOP: 5,30 %</title></rect>
+<text x="374.5" y="300.0" class="v" text-anchor="start" >5,30 %</text>
+<text x="290.0" y="336.0" class="l" text-anchor="end" >Codigo guest recompilado</text>
+<rect x="300.0" y="321" width="32.3" height="22" rx="3" fill="#E69F00"><title>Codigo guest recompilado: 2,50 %</title></rect>
+<text x="338.3" y="336.0" class="v" text-anchor="start" >2,50 %</text>
+<text x="290.0" y="372.0" class="l" text-anchor="end" >Fora do modulo (kernel, esperas)</text>
+<rect x="300.0" y="357" width="73.6" height="22" rx="3" fill="#E69F00"><title>Fora do modulo (kernel, esperas): 5,70 %</title></rect>
+<text x="379.6" y="372.0" class="v" text-anchor="start" >5,70 %</text>
+<line x1="300.0" x2="300.0" y1="98" y2="386" class="ax"/>
+</svg>

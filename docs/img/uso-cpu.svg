@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="464" viewBox="0 0 820 464" role="img" aria-labelledby="t d">
+<title id="t">Uso de CPU do processo durante a corrida (% de 16 threads)</title><desc id="d">Amostra a cada 1 s por tools/perf_run.ps1; sem dados ate a rodada final.</desc>
+<style>
+.t{font:600 18px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .s{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#6e7781}
+.l{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .v{font:600 13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a}
+.p{font:italic 12px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#8c959f}
+.ax{stroke:#8c959f;stroke-width:1} .gr{stroke:#8c959f;stroke-opacity:.25;stroke-width:1}
+.pend{fill:none;stroke:#8c959f;stroke-width:1.5;stroke-dasharray:5 4}
+@media (prefers-color-scheme: dark){.t,.l,.v{fill:#c9d1d9} .s,.p{fill:#8b949e}}
+</style>
+<text x="20.0" y="28.0" class="t" text-anchor="start" >Uso de CPU do processo durante a corrida (% de 16 threads)</text>
+<text x="20.0" y="48.0" class="s" text-anchor="start" >Amostra a cada 1 s por tools/perf_run.ps1; sem dados ate a rodada final.</text>
+<rect x="20.0" y="59.0" width="14" height="14" rx="3" fill="#0072B2"/>
+<text x="40.0" y="70.0" class="l" text-anchor="start" >CPU [PENDENTE]</text>
+<rect x="146.8" y="59.0" width="14" height="14" rx="3" fill="#E69F00"/>
+<text x="166.8" y="70.0" class="l" text-anchor="start" >CPU em thread [PENDENTE]</text>
+<rect x="345.6" y="59.0" width="14" height="14" rx="3" fill="#009E73"/>
+<text x="365.6" y="70.0" class="l" text-anchor="start" >D3D11 ROV [PENDENTE]</text>
+<line x1="70.0" x2="796.0" y1="408.0" y2="408.0" class="gr"/>
+<text x="62.0" y="412.0" class="l" text-anchor="end" >0</text>
+<line x1="70.0" x2="796.0" y1="350.0" y2="350.0" class="gr"/>
+<text x="62.0" y="354.0" class="l" text-anchor="end" >0,2</text>
+<line x1="70.0" x2="796.0" y1="292.0" y2="292.0" class="gr"/>
+<text x="62.0" y="296.0" class="l" text-anchor="end" >0,5</text>
+<line x1="70.0" x2="796.0" y1="234.0" y2="234.0" class="gr"/>
+<text x="62.0" y="238.0" class="l" text-anchor="end" >0,8</text>
+<line x1="70.0" x2="796.0" y1="176.0" y2="176.0" class="gr"/>
+<text x="62.0" y="180.0" class="l" text-anchor="end" >1</text>
+<line x1="70.0" x2="796.0" y1="118.0" y2="118.0" class="gr"/>
+<text x="62.0" y="122.0" class="l" text-anchor="end" >1,2</text>
+<line x1="70.0" x2="70.0" y1="118" y2="408" class="ax"/>
+<line x1="70.0" x2="796.0" y1="408" y2="408" class="ax"/>
+<text x="62.0" y="108.0" class="s" text-anchor="end" >%</text>
+<line x1="70.0" x2="70.0" y1="408" y2="413" class="ax"/>
+<text x="70.0" y="428.0" class="s" text-anchor="middle" >0</text>
+<line x1="215.2" x2="215.2" y1="408" y2="413" class="ax"/>
+<text x="215.2" y="428.0" class="s" text-anchor="middle" >0</text>
+<line x1="360.4" x2="360.4" y1="408" y2="413" class="ax"/>
+<text x="360.4" y="428.0" class="s" text-anchor="middle" >0</text>
+<line x1="505.6" x2="505.6" y1="408" y2="413" class="ax"/>
+<text x="505.6" y="428.0" class="s" text-anchor="middle" >1</text>
+<line x1="650.8" x2="650.8" y1="408" y2="413" class="ax"/>
+<text x="650.8" y="428.0" class="s" text-anchor="middle" >1</text>
+<line x1="796.0" x2="796.0" y1="408" y2="413" class="ax"/>
+<text x="796.0" y="428.0" class="s" text-anchor="middle" >1</text>
+<text x="433.0" y="450.0" class="s" text-anchor="middle" >tempo de parede (s)</text>
+<rect x="110.0" y="241.0" width="646.0" height="44" rx="6" class="pend"/>
+<text x="433.0" y="268.0" class="p" text-anchor="middle" >[PENDENTE] aguardando a medicao final</text>
+</svg>

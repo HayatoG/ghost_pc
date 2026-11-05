@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="266" viewBox="0 0 820 266" role="img" aria-labelledby="t d">
+<title id="t">Tempo de parede para executar o mesmo pad script (scene3d)</title><desc id="d">Mesma sequencia (cerca de 7715 vsync) do boot ate o fim da cena 3D. Menor e melhor.</desc>
+<style>
+.t{font:600 18px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .s{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#6e7781}
+.l{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .v{font:600 13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a}
+.p{font:italic 12px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#8c959f}
+.ax{stroke:#8c959f;stroke-width:1} .gr{stroke:#8c959f;stroke-opacity:.25;stroke-width:1}
+.pend{fill:none;stroke:#8c959f;stroke-width:1.5;stroke-dasharray:5 4}
+@media (prefers-color-scheme: dark){.t,.l,.v{fill:#c9d1d9} .s,.p{fill:#8b949e}}
+</style>
+<text x="20.0" y="28.0" class="t" text-anchor="start" >Tempo de parede para executar o mesmo pad script (scene3d)</text>
+<text x="20.0" y="48.0" class="s" text-anchor="start" >Mesma sequencia (cerca de 7715 vsync) do boot ate o fim da cena 3D. Menor e melhor.</text>
+<rect x="20.0" y="59.0" width="14" height="14" rx="3" fill="#0072B2"/>
+<text x="40.0" y="70.0" class="l" text-anchor="start" >Antes</text>
+<rect x="82.0" y="59.0" width="14" height="14" rx="3" fill="#E69F00"/>
+<text x="102.0" y="70.0" class="l" text-anchor="start" >Depois</text>
+<line x1="300.0" x2="300.0" y1="98" y2="242" class="gr"/>
+<text x="300.0" y="258.0" class="s" text-anchor="middle" >0</text>
+<line x1="441.6" x2="441.6" y1="98" y2="242" class="gr"/>
+<text x="441.6" y="258.0" class="s" text-anchor="middle" >100</text>
+<line x1="583.1" x2="583.1" y1="98" y2="242" class="gr"/>
+<text x="583.1" y="258.0" class="s" text-anchor="middle" >200</text>
+<line x1="724.7" x2="724.7" y1="98" y2="242" class="gr"/>
+<text x="724.7" y="258.0" class="s" text-anchor="middle" >300</text>
+<text x="290.0" y="120.0" class="l" text-anchor="end" >Baseline CPU</text>
+<rect x="300.0" y="105" width="409.5" height="22" rx="3" fill="#0072B2"><title>Baseline CPU: 289 s</title></rect>
+<text x="715.5" y="120.0" class="v" text-anchor="start" >289 s</text>
+<text x="290.0" y="156.0" class="l" text-anchor="end" >CPU</text>
+<rect x="300.0" y="141" width="259.6" height="22" rx="3" fill="#E69F00"><title>CPU: 183 s</title></rect>
+<text x="565.6" y="156.0" class="v" text-anchor="start" >183 s</text>
+<text x="290.0" y="192.0" class="l" text-anchor="end" >CPU em thread (rodada a confirmar)</text>
+<rect x="300.0" y="177" width="235.7" height="22" rx="3" fill="#E69F00"><title>CPU em thread (rodada a confirmar): 166 s</title></rect>
+<text x="541.7" y="192.0" class="v" text-anchor="start" >166 s</text>
+<text x="290.0" y="228.0" class="l" text-anchor="end" >D3D11 ROV</text>
+<rect x="300.0" y="213" width="246.9" height="22" rx="3" fill="#E69F00"><title>D3D11 ROV: 174 s</title></rect>
+<text x="552.9" y="228.0" class="v" text-anchor="start" >174 s</text>
+<line x1="300.0" x2="300.0" y1="98" y2="242" class="ax"/>
+</svg>
