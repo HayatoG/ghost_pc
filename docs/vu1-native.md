@@ -122,6 +122,29 @@ mas sem eliminar o cálculo das flags (os bits sticky ainda são necessários).
 3. **Emissor x86-64** dos blocos (VirtualAlloc executável, xmm fixos por bloco), mantendo os handlers atuais
    como fallback.
 
+## Rodada de 05/11 (03:59–04:15): medida para o estágio 2b, sem mudança de código
+
+Prazo curto (16 min): só houve tempo para medir e decidir o próximo passo. Nenhum arquivo de código foi alterado.
+
+Medida (harness, `rec_gameplay`, 10 passadas, 3 repetições, exe do estágio 2a de 01:10, máquina com outros
+agentes): **25,0–25,8 ns por ciclo**; 6 000 chamadas e 1 470 304 ciclos de VU por passada, ou seja **~245 ciclos
+por chamada** e **~6,1 µs por chamada**. A gravação cobre 3 vsyncs, então são ~2 000 chamadas por vsync e
+**~12 ms por vsync**, o que bate com os ~11,3 ms do perfil do jogo (`gameplay-profile-hw2-2026-11-05.md`).
+
+Leitura: os micro-programas do jogo são curtos (~245 ciclos). Isso muda a prioridade do estágio 2b:
+1. **Custo fixo por chamada e revalidação após MPG** (candidato a): a cache é invalidada por *geração global*
+   do microcódigo (`getVU1CodeGeneration`). Com ~340 MPGs por quadro, quase toda chamada encontra geração nova
+   e revalida cada par executado (comparação de 8 bytes + `memcmp` de 32 bytes do lookahead). Com ~100 pares
+   distintos por chamada, a estimativa é ~1 µs de 6,1 µs (não medido ainda). Correção proposta: a memória
+   registrar a faixa suja de cada MPG (geração por bloco de 512 bytes, por exemplo) e o executor revalidar só
+   os blocos cujo número mudou. Exige mexer em `PS2Memory` (fora do escopo desta rodada).
+2. Também por chamada: `fegetround`/`fesetround` (dezenas de ns) e o `syncTo` do começo; pequenos frente a 6 µs.
+3. Depois, o laço por par (estágio 2b itens 1–3 acima). Com programas de ~245 ciclos, um JIT só compensa com
+   cache de blocos traduzidos chaveada pelo conteúdo (hash do bloco), porque o código muda a cada quadro.
+
+Próximo passo concreto: instrumentar no harness o tempo de `fetch` com geração nova contra geração igual
+(rodar `rec_gameplay` com a geração congelada) para medir o item 1 antes de implementá-lo.
+
 ## O que estudei do microVU (PCSX2, GPL-3.0+), regra 8
 
 Estudo do desenho de memória, mais uma leitura (somente leitura) de
