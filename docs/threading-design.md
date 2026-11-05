@@ -315,7 +315,8 @@ Como medir:
 
 ## 8. Itens NAO VERIFICADOS / NAO MEDIDOS
 
-- Se o jogo lê memória da VU1, VIF1 ROW ou CSR por MMIO, e quantas vezes (etapa 0).
+- ~~Se o jogo lê memória da VU1, VIF1 ROW ou CSR por MMIO, e quantas vezes (etapa 0).~~ Medido (seção 10.3): VU1 e
+  ROW nunca; CSR 0,5 vez por vsync (bit FIELD). Bytes de UNPACK por quadro: seção 10.4.
 - Se o interpretador da VU0 acessa registradores da VU1.
 - Se o IOP host usa relógio de parede (afeta o determinismo da etapa 1).
 - Bytes de UNPACK por quadro (tamanho de R1).
@@ -363,7 +364,129 @@ fc /b out_sync.txt out_async.txt
 ```
 (`PS2X_VU1_NATIVE=1` no ambiente usa o executor nativo.)
 
-## 10. Fontes consultadas
+## 10. Resultados das etapas 0-2 (05/11, ~01:30)
+
+Nada mudou de thread. Tudo fica atrás de variáveis de ambiente; sem elas o comportamento é o mesmo:
+`regress.ps1 -Scenario menu` deu **byte a byte igual** (md5 `84891ae3`) com o build novo, sem as envs, antes e depois
+da correção do relógio (abaixo).
+
+### 10.1 O que foi implementado
+
+| Etapa | Env | Arquivos | O que faz |
+|---|---|---|---|
+| 0 | `PS2X_THREAD_STATS=1` | `include/ps2_thread_stats.h` (novo, só header), pontos de contagem em `ps2_memory.cpp`, `ps2_vif1_interpreter.cpp`, `gs/gs_frontend.cpp`, `Kernel/Stubs/GS.cpp` | contadores atômicos (`relaxed`; desligado = um desvio previsível). Linha `[thread-stats]` a cada 10 s de host (`window`), a cada 100 vsyncs do guest na thread EE (`vsync100`, janelas independentes da velocidade do host) e no fim (`total`). Cada contador sai como `delta(por vsync)` e os zeros também saem, para provar que o gatilho não disparou |
+| 1 | `PS2X_GUEST_CLOCK_ONLY=1` | `include/ps2_guest_clock.h` (novo), `Kernel/EeScheduler.cpp`, `ps2_runtime.cpp` | vblank, alarmes e timers só por ciclos do EE (`processDueDeadlines` ignora o `hostDeadline`; `waitForEvent` pula o tempo ocioso na hora). Sem limite de 50 Hz: o guest anda o mais rápido que o host deixa. O script do pad roda **na thread EE, no VBlankStart**, pelo vsync exato (gancho `ps2_guest_clock::setVsyncHook`); `shot` faz `latchHostPresentationFrame` na própria thread EE e grava o PNG (mesmo recorte do `UploadFrame`); `quit` chama `requestStop`. A janela deixa de aplicar o script nesse modo |
+| 2 | `PS2X_GS_STREAM_HASH=<arquivo>` | `include/runtime/gs/gs_stream_hash.h` (novo), `gs/gs_frontend.cpp`, `Kernel/EeScheduler.cpp` | FNV-1a de 64 bits sobre palavras de 8 bytes de tudo que entra no frontend do GS: `processGIFPacket` (com o caminho GIF), `writeRegister` vindo dos stubs HLE, `uploadImageNative` (4 registradores + dados) e `reset`. No VBlankStart mistura PMODE/SMODE2/DISPFB1/2/DISPLAY1/2/BGCOLOR e grava `vsync hash itens bytes` |
+
+- O ponto do hash é a entrada pública do `GS` (frontend), comum a todos os backends (`cpu`, `cpu-thread`, banded,
+  `d3d11`, `hw`): o GS por hardware **não precisa mudar**. Na etapa 3, o hash continua no mesmo lugar (que passa a rodar
+  na thread GS); quem fecha o intervalo de cada vsync passa a ser o item `VSYNC` do anel R2, não o EE direto.
+- Nenhum `.cpp` novo (só headers): o CMake não precisa reconfigurar. Nenhum método novo em `PS2Runtime`.
+- Script do teste: `pad_scripts/determinism_scene3d.txt` (botões do `regress_scene3d.txt` até a cena 3D, capturas em
+  7564 e 7600, sai em 7620).
+
+### 10.2 Determinismo (etapa 1 + 2)
+
+Comando (de `ghost_pc/`, duas vezes, com arquivos de saída diferentes):
+```
+$env:PS2X_GUEST_CLOCK_ONLY='1'; $env:PS2X_GS_STREAM_HASH="$PWD\logs\gs_hash_det_A2.txt"
+powershell -NoProfile -File tools\regress.ps1 -Scenario scene3d -Exe work\thr_exe\ps2EntryRunner.exe `
+  -PadScript pad_scripts\determinism_scene3d.txt -Out work\regress_out\det_A2 -KeepOut
+```
+(o `regress.ps1` sai com código 1 porque as capturas `d0*` não existem na referência; aqui só importam o arquivo de
+hashes e os PNGs.)
+
+- **1ª tentativa: NÃO determinístico.** Os arquivos divergiam já no vsync 10 (boot): numa corrida o vsync 10 tinha 1 item,
+  na outra 5. Causa: em `EeScheduler::waitForEvent`, para escolher o próximo prazo entre o vblank e o timer do EE, o
+  código compara **instantes do host** (`now + eeCyclesToHostDuration(timerCycles)` contra o `hostDeadline` do vblank).
+  Com o relógio só do guest, o `hostDeadline` já ficou para trás e a escolha passa a depender do relógio de parede.
+  Correção (só com `PS2X_GUEST_CLOCK_ONLY`): comparar em ciclos (`m_eeCycle + timerCycles < deadlineCycle`).
+  Observação: no modo padrão essa comparação também depende do host, e é uma das razões de o modo padrão não ser
+  determinístico em ciclos (não mexi: o padrão tinha que ficar igual).
+- **2ª tentativa: determinístico.** Duas corridas simultâneas (máquina carregada, velocidades diferentes) geraram
+  arquivos de hashes **idênticos** (7 620 linhas, md5 `35004f17…`) e capturas idênticas (`d07564` md5 `267f287b…`,
+  `d07600` md5 `159bd2c4…`). Uma terceira corrida, com o script completo `regress_scene3d.txt` e **com**
+  `PS2X_THREAD_STATS=1`, deu o mesmo `q07564` (md5 `267f287b…`): os contadores não perturbam o guest.
+- 4ª corrida (script completo, só-guest, **sem** estatística) contra a 3ª: arquivo de hashes idêntico (7 720 linhas,
+  md5 `8857074b…`) e as 6 capturas iguais (`regress.ps1 -Ref work\regress_out\thr_full`: 0 falhas).
+- Fontes de não determinismo procuradas e descartadas: o IOP roda por ciclos do EE (`advanceIopEeCycles`, sem thread
+  nem relógio de parede); não há outra thread postando eventos para o EE (`postEeEvent` não é chamado por ninguém);
+  o áudio não devolve posição de reprodução ao guest. Restam como risco teórico: `sceCdReadClock` (RTC do host,
+  `Stubs/CD.cpp:520`) e datas do cartão de memória, que dependem do dia, não da velocidade.
+- **O modo só-guest muda a temporização do jogo em relação ao padrão**: as 6 capturas do `regress_scene3d` com
+  `PS2X_GUEST_CLOCK_ONLY=1` diferem da referência atual (PSNR 30-40 dB: o jogo está em outro ponto da animação). É
+  esperado: no padrão, quando o EE está ocupado mas mais rápido que o tempo real, o vblank espera o host e o EE roda
+  mais ciclos por vsync. Para as etapas 3+ a referência é a corrida só-guest de `off`, guardada em
+  `work/reference_regress/scene3d_guestclock/` (6 PNGs + `gs_stream_hash.txt`; fora do git, tem imagem do jogo). Uso:
+  `PS2X_GUEST_CLOCK_ONLY=1` + `regress.ps1 -Scenario scene3d -Ref work\reference_regress\scene3d_guestclock`.
+- Velocidade só-guest no script completo (máquina compartilhada, 2-3 corridas ao mesmo tempo): 170 s, média 45,6
+  vsync/s (menus bem acima de 50, cena 3D bem abaixo).
+
+### 10.3 Contadores (etapa 0): gatilhos de espera
+
+Corrida: `regress_scene3d.txt` completo, só-guest, rasterizador de CPU, VU1 na configuração padrão (sem `PS2X_VU1_NATIVE`). Janela "3D" = vsyncs
+7600-7700 (só gameplay 3D; o jogo desenha um quadro a cada 2 vsyncs, ou seja 25 quadros/s de guest).
+
+| Gatilho (desenho) | Total (7 720 vsyncs) | Cena 3D (por vsync) | Conclusão |
+|---|---|---|---|
+| leitura de memória da VU1 pelo EE (WV) | 0 | 0 | não dispara |
+| escrita do EE na memória da VU1 | 0 | 0 | — |
+| leitura de VIF1 ROW (WV) | 0 | 0 | não dispara (há 0,4-0,5 leituras/vsync de outros registradores do VIF1: L) |
+| DMA SPR↔VU1 (WV) | 0 | 0 | não dispara. **SPR↔VU0: 72/vsync** na cena 3D (L: a VU0 fica no EE) |
+| leitura de SIGLBLID (WA) | 0 | 0 | não dispara |
+| escrita no CSR (WA) | 0 | 0 | não dispara |
+| local→host (WA) | 0 | 0 | não dispara (confirma o perfil de 04/11) |
+| reset do GS (WA) | 1 | 0 | só no boot |
+| **leitura do CSR (WA)** | 3 524 | **0,5** | **dispara uma vez por quadro do jogo** |
+
+A leitura de CSR que dispara vem, por inferência, de `FUN_0019c11c` (no código gerado: `0x19c1b8 ld $v0,0($a1)` com
+`$a1 = 0x12001000`, seguido de `andi $v0,$v0,0x2000`; é o único leitor de CSR fora das entradas HLE achado por busca
+de `lui 0x1200` no código gerado; [NAO VERIFICADO] por PC em tempo de execução): o jogo testa **só o bit FIELD**, que é escrito pelo EE no
+VBlankStart (`EeScheduler::processEvent`), não pelo GS. Se a etapa 3 fizesse WA nessa leitura, o EE esperaria a
+thread GS esvaziar **a cada quadro**, serializando EE e GS. Ajuste do desenho (etapa 3): a leitura de CSR **não espera**
+quando não há SIGNAL/FINISH/LABEL em voo. O EE marca, no produtor, se algum pacote enfileirado em R2/R3 desde o último
+fence escreve esses registradores (varredura leve de A+D, a etapa 7 reduzida a um bit "pendente"). Sem nada pendente,
+os bits do GS não podem mudar, e o valor publicado (FIELD/VSINT do EE + SIGNAL/FINISH já aplicados) é exato. Os outros leitores
+de CSR no código gerado (`entry_002a2e4c`, `entry_002a2ee0/ef8`) são entradas alternativas do `sceGsResetGraph`/
+`sceGsPutIMR`, que são HLE.
+
+### 10.4 Contadores (etapa 0): bytes por anel
+
+| Anel | Item | Cena 3D, por vsync | Por quadro do jogo (2 vsyncs) |
+|---|---|---|---|
+| R1 EE→VU1 | UNPACK | 5 389 comandos, 242 KB de payload | ~484 KB |
+| R1 | MPG | **170 uploads, 208 KB** | ~416 KB |
+| R1 | MSCAL / MSCNT / STROW-STCOL | 1 737 / 0 / 0 | 3 474 chamadas |
+| R2 EE→GS | PATH2 (DIRECT) | 244 pacotes, 842 KB | ~1,7 MB |
+| R2 | PATH3 | 1,5 pacote, 1,19 MB | ~2,4 MB |
+| R2 | atalhos nativos de imagem / escritas HLE de registrador | 0 / 0 | 0 |
+| R3 VU1→GS | PATH1 (um por XGKICK) | 630 pacotes, 335 KB | ~670 KB |
+
+- Conferência cruzada com o hash (etapa 2): na cena 3D os vsyncs alternam 1 750 itens / 4,59 MB e 1 item / 56 bytes:
+  4,59 MB por quadro do jogo entram no frontend, batendo com R2 + R3 (~4,8 MB, a diferença são pacotes PATH3 retidos
+  ou cortados).
+- **R1**: ~0,9 MB por quadro (não "poucos MB"). O MPG é surpresa: o jogo recarrega microcódigo ~340 vezes por quadro
+  (~1,2 KB cada). Com o anel de 16 MiB cabem ~18 quadros. O custo de cópia é pequeno, mas o `WRITE_MICRO` precisa
+  invalidar o cache decodificado/nativo da VU1 na thread VU1 a cada upload: medir na etapa 4 se isso pesa (hoje o
+  `markVU1CodeModified` já roda na mesma frequência, então não é custo novo).
+- **R2**: ~4,1 MB por quadro; 32 MiB guardam ~8 quadros, sobra para o limite de 2 vsyncs à frente.
+- **R3**: ~0,7 MB por quadro; 8 MiB guardam ~12 quadros.
+- MSCAL: 1 737/vsync = ~3 470 chamadas por quadro, confirmando as "~3 000 chamadas por quadro" do protótipo.
+
+### 10.5 Pendências
+
+- Com o backend `d3d11`/`hw`, o `shot` só-guest faz `Present` na thread EE. O frontend já chama o backend da thread EE
+  e o `Present` é serializado por `m_backendLifetimeMutex`, mas não testei (o regress usa `cpu`).
+- O `PS2X_PAD_CLOCK=host` não tem efeito com `PS2X_GUEST_CLOCK_ONLY=1` (o script sempre anda por vsync do guest).
+- Os contadores de leitura de VU1/ROW/CSR só pegam acessos que passam por `PS2Memory::read*`. Leituras inline no código
+  gerado (como o `cfc2 vi29`, item #17) não são contadas.
+- Etapa 3 deve usar `PS2X_GUEST_CLOCK_ONLY=1` + `PS2X_GS_STREAM_HASH` como oráculo: o arquivo de `PS2X_THREADS=gs`
+  tem que ser igual a `work/reference_regress/scene3d_guestclock/gs_stream_hash.txt` (regerar com o build `off` se o
+  código do guest, da VU ou do frontend mudar; ele vale para o build de 05/11 ~01:20 sem `PS2X_VU1_NATIVE`).
+- O executável testado é uma cópia em `work/thr_exe/` (para não travar o link do `build_perf`, que outros agentes
+  rodam); o `build_perf` tem o mesmo código.
+
+## 11. Fontes consultadas
 
 - Código do runtime em `work/ps2recomp_game/ps2xRuntime` (base PS2Recomp, GPL-3.0), só leitura.
 - PCSX2 (GPL-3.0), leitura em 05/11: `https://raw.githubusercontent.com/PCSX2/pcsx2/master/pcsx2/MTVU.cpp`,

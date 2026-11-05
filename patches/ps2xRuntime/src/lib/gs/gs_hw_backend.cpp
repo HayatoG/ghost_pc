@@ -344,7 +344,7 @@ std::string GSHwBackend::StatsLine() const
 {
     std::ostringstream o;
     const Stats &s = m_stats;
-    o << "presents=" << m_presents << " gpu_prims=" << s.gpuPrims << " cpu_prims=" << s.cpuPrims << " skipped=" << s.skipped
+    o << "presents=" << m_presents << " gpu_prims=" << s.gpuPrims << " cpu_prims=" << s.cpuPrims << " skipped=" << s.skipped << " (ztst0=" << s.skipWhy[0] << " spr_out=" << s.skipWhy[1] << " degen=" << s.skipWhy[2] << " tri_out=" << s.skipWhy[3] << " never=" << s.skipWhy[4] << " nowrite=" << s.skipWhy[5] << " clamp=" << s.skipWhy[6] << ")"
       << " batches=" << s.batches << " two_pass=" << s.twoPass << " surfaces=" << m_surfaces.size() << " created=" << s.surfacesCreated
       << " writebacks=" << s.writebacks << " loads=" << s.loads << " upload_pages=" << s.uploadPages << " readbacks=" << s.readbacks
       << " readback_pages=" << s.readbackPages << " tex_rt=" << s.rtSampled << " tex_vram=" << s.vramSampled
@@ -632,6 +632,8 @@ void GSHwBackend::UploadPagesLocked(const PageSet &pages)
     const PageSet todo = pages & m_cpuNewer;
     if (!todo.any())
         return;
+    // The pending batch may sample the old contents of these pages: draw it first.
+    FlushBatchLocked();
     EndPassLocked();
     todo.forEachRun([&](uint32_t first, uint32_t count)
                     { m_device->UpdateBuffer(*m_vramBuffer, first * kPageBytes, m_vram + first * kPageBytes, count * kPageBytes); });
@@ -645,8 +647,8 @@ void GSHwBackend::WritebackLocked(Surface &s)
 {
     if (!s.dirty.any())
         return;
-    if (m_key.color == &s || m_key.depth == &s)
-        FlushBatchLocked();
+    // The write-back changes the GPU copy of local memory, which the pending batch may sample.
+    FlushBatchLocked();
     EndPassLocked();
     TransferConstants c{};
     c.a[0] = s.base;
@@ -1028,7 +1030,7 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
     const uint32_t ztst = static_cast<uint32_t>((test >> 17) & 3u);
     if (ztst == 0u)
     {
-        ++m_stats.skipped;
+        ++m_stats.skipped; ++m_stats.skipWhy[0];
         return true;
     }
     const uint32_t fpsm = ctx.frame.psm, zpsm = ctx.zbuf.psm;
@@ -1080,7 +1082,7 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
         by1 = std::min<int>(y0 + spanY - 1, ctx.scissor.y1);
         if (bx1 < bx0 || by1 < by0)
         {
-            ++m_stats.skipped;
+            ++m_stats.skipped; ++m_stats.skipWhy[1];
             return true;
         }
         const uint32_t rgba = PackRgba(b);
@@ -1113,7 +1115,7 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
         const float denom = (fx[0] - fx[2]) * (fy[1] - fy[2]) + (fy[0] - fy[2]) * (fx[2] - fx[1]);
         if (std::fabs(denom) < 0.001f)
         {
-            ++m_stats.skipped;
+            ++m_stats.skipped; ++m_stats.skipWhy[2];
             return true;
         }
         bx0 = std::max<int>(static_cast<int>(std::floor(std::min({fx[0], fx[1], fx[2]}))), ctx.scissor.x0);
@@ -1122,7 +1124,7 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
         by1 = std::min<int>(static_cast<int>(std::ceil(std::max({fy[0], fy[1], fy[2]}))), ctx.scissor.y1);
         if (bx1 < bx0 || by1 < by0)
         {
-            ++m_stats.skipped;
+            ++m_stats.skipped; ++m_stats.skipWhy[3];
             return true;
         }
         const uint32_t flat = PackRgba(batch.vertices[2]);
@@ -1194,7 +1196,7 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
             // never passes: the fail branch is the whole primitive
             switch (afail)
             {
-            case 0u: ++m_stats.skipped; return true;
+            case 0u: ++m_stats.skipped; ++m_stats.skipWhy[4]; return true;
             case 1u: depth.write = false; break;
             case 2u: mask = 0; break;
             default: depth.write = false; mask &= gs_rhi::MaskR | gs_rhi::MaskG | gs_rhi::MaskB; break;
@@ -1224,7 +1226,7 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
     }
     if (mask == 0 && !(zUsed && depth.write) && !second)
     {
-        ++m_stats.skipped;
+        ++m_stats.skipped; ++m_stats.skipWhy[5];
         return true;
     }
 
@@ -1261,7 +1263,7 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
         by1 = std::min<int>(by1, static_cast<int>(kSurfaceRows) - 1);
         if (bx1 < bx0 || by1 < by0)
         {
-            ++m_stats.skipped;
+            ++m_stats.skipped; ++m_stats.skipWhy[6];
             return true;
         }
     }

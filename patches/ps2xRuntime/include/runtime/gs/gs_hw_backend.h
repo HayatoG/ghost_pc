@@ -260,6 +260,7 @@ private:
         uint64_t rtSampled = 0, vramSampled = 0, feedbackCopies = 0, surfacesCreated = 0;
         uint64_t unsupportedBlend = 0, partialMask = 0, date = 0, pabe = 0;
         uint64_t flushKey = 0, flushCoherence = 0;
+        uint64_t skipWhy[8]{};
         uint64_t whyTarget = 0, whySource = 0, whyPipeline = 0, whyTex = 0, whyClut = 0, whyOther = 0;
     };
     mutable Stats m_stats{};

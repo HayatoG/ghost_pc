@@ -333,6 +333,7 @@ struct PSOut
 {
     float4 c0 : SV_Target0;
     float4 c1 : SV_Target1;
+    float depth : SV_Depth; // the GS stores and compares integer Z: round the interpolated value
 };
 
 PSOut PSMain(VSOut input)
@@ -420,6 +421,7 @@ PSOut PSMain(VSOut input)
         outA |= 0x80u;
     o.c0 = float4(cs, (float)outA / 255.0f);
     o.c1 = float4(0.0f, 0.0f, 0.0f, saturate(factor));
+    o.depth = (gXform.z > 0.0f) ? floor(input.pos.z / gXform.z + 0.5f) * gXform.z : input.pos.z;
     return o;
 }
 )HLSL";
