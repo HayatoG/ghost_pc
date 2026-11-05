@@ -24905,10 +24905,10 @@ index 0ce4bb4..84c3d64 100644
 +    }
 +}
 diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
-index 609270c..8b587b3 100644
+index 609270c..d7c47d0 100644
 --- a/ps2xRuntime/src/lib/ps2_runtime.cpp
 +++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
-@@ -1,2472 +1,2912 @@
+@@ -1,2472 +1,2928 @@
 -#include "ps2_runtime.h"
 -#include "ps2_log.h"
 -#include "ps2_stubs.h"
@@ -29983,8 +29983,24 @@ index 609270c..8b587b3 100644
 +    raiseCop0Exception(ctx, EXCEPTION_INTEGER_OVERFLOW);
 +}
 +
++#ifdef _WIN32
++// Declared by hand: <mmsystem.h> would drag windows.h into this raylib translation unit.
++#pragma comment(lib, "winmm.lib")
++extern "C" __declspec(dllimport) unsigned int __stdcall timeBeginPeriod(unsigned int uPeriod);
++#endif
++
 +void PS2Runtime::run()
 +{
++#ifdef _WIN32
++    // Windows rounds condition_variable/sleep timeouts to the system timer tick (up to 15.6 ms); the GS/VU/EE
++    // threads wait with sub-millisecond timeouts. OPT-IN (default off: no gain measured, 05/11): PS2X_TIMER_RES_MS=1.
++    {
++        const char *res = std::getenv("PS2X_TIMER_RES_MS");
++        const unsigned ms = res ? static_cast<unsigned>(std::strtoul(res, nullptr, 10)) : 0u;
++        if (ms != 0u)
++            timeBeginPeriod(ms);
++    }
++#endif
 +    m_stopRequested.store(false, std::memory_order_relaxed);
 +    ps2_stubs::resetSifState();
 +    resetIop();
