@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="820" height="338" viewBox="0 0 820 338" role="img" aria-labelledby="t d">
-<title id="t">Ganho medido por mudanca (razao, maior e melhor)</title><desc id="d">Cada barra vem de um teste proprio (harness, replay ou corrida); nao se multiplicam.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="518" viewBox="0 0 820 518" role="img" aria-labelledby="t d">
+<title id="t">Ganho medido por mudanca (razao, maior e melhor)</title><desc id="d">Cada barra vem de um teste proprio, em momentos diferentes; nao se multiplicam. Cache de VFS: sem ganho.</desc>
 <style>
 .t{font:600 18px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .s{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#6e7781}
 .l{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .v{font:600 13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a}
@@ -9,36 +9,53 @@
 @media (prefers-color-scheme: dark){.t,.l,.v{fill:#c9d1d9} .s,.p{fill:#8b949e}}
 </style>
 <text x="20.0" y="28.0" class="t" text-anchor="start" >Ganho medido por mudanca (razao, maior e melhor)</text>
-<text x="20.0" y="48.0" class="s" text-anchor="start" >Cada barra vem de um teste proprio (harness, replay ou corrida); nao se multiplicam.</text>
+<text x="20.0" y="48.0" class="s" text-anchor="start" >Cada barra vem de um teste proprio, em momentos diferentes; nao se multiplicam. Cache de VFS: sem ganho.</text>
 <rect x="20.0" y="59.0" width="14" height="14" rx="3" fill="#0072B2"/>
 <text x="40.0" y="70.0" class="l" text-anchor="start" >Harness ou replay isolado</text>
 <rect x="226.0" y="59.0" width="14" height="14" rx="3" fill="#E69F00"/>
-<text x="246.0" y="70.0" class="l" text-anchor="start" >Corrida inteira</text>
-<line x1="300.0" x2="300.0" y1="98" y2="314" class="gr"/>
-<text x="300.0" y="330.0" class="s" text-anchor="middle" >0</text>
-<line x1="424.1" x2="424.1" y1="98" y2="314" class="gr"/>
-<text x="424.1" y="330.0" class="s" text-anchor="middle" >1</text>
-<line x1="548.2" x2="548.2" y1="98" y2="314" class="gr"/>
-<text x="548.2" y="330.0" class="s" text-anchor="middle" >2</text>
-<line x1="672.3" x2="672.3" y1="98" y2="314" class="gr"/>
-<text x="672.3" y="330.0" class="s" text-anchor="middle" >3</text>
+<text x="246.0" y="70.0" class="l" text-anchor="start" >Corrida inteira (vsync/s)</text>
+<line x1="300.0" x2="300.0" y1="98" y2="494" class="gr"/>
+<text x="300.0" y="510.0" class="s" text-anchor="middle" >0</text>
+<line x1="393.1" x2="393.1" y1="98" y2="494" class="gr"/>
+<text x="393.1" y="510.0" class="s" text-anchor="middle" >1</text>
+<line x1="486.1" x2="486.1" y1="98" y2="494" class="gr"/>
+<text x="486.1" y="510.0" class="s" text-anchor="middle" >2</text>
+<line x1="579.2" x2="579.2" y1="98" y2="494" class="gr"/>
+<text x="579.2" y="510.0" class="s" text-anchor="middle" >3</text>
+<line x1="672.3" x2="672.3" y1="98" y2="494" class="gr"/>
+<text x="672.3" y="510.0" class="s" text-anchor="middle" >4</text>
 <text x="290.0" y="120.0" class="l" text-anchor="end" >VU1 interpretador (minimo)</text>
-<rect x="300.0" y="105" width="372.3" height="22" rx="3" fill="#0072B2"><title>VU1 interpretador (minimo): 3,00 x</title></rect>
-<text x="678.3" y="120.0" class="v" text-anchor="start" >3,00 x</text>
+<rect x="300.0" y="105" width="279.2" height="22" rx="3" fill="#0072B2"><title>VU1 interpretador (minimo): 3,00 x</title></rect>
+<text x="585.2" y="120.0" class="v" text-anchor="start" >3,00 x</text>
 <text x="290.0" y="156.0" class="l" text-anchor="end" >VU1 interpretador (maximo)</text>
-<rect x="300.0" y="141" width="409.5" height="22" rx="3" fill="#0072B2"><title>VU1 interpretador (maximo): 3,30 x</title></rect>
-<text x="715.5" y="156.0" class="v" text-anchor="start" >3,30 x</text>
-<text x="290.0" y="192.0" class="l" text-anchor="end" >Rasterizador CPU (replay)</text>
-<rect x="300.0" y="177" width="253.2" height="22" rx="3" fill="#0072B2"><title>Rasterizador CPU (replay): 2,04 x</title></rect>
-<text x="559.2" y="192.0" class="v" text-anchor="start" >2,04 x</text>
-<text x="290.0" y="228.0" class="l" text-anchor="end" >Fila cpu-thread: 26,4 -&gt; 33,2</text>
-<rect x="300.0" y="213" width="156.4" height="22" rx="3" fill="#E69F00"><title>Fila cpu-thread: 26,4 -&gt; 33,2: 1,26 x</title></rect>
-<text x="462.4" y="228.0" class="v" text-anchor="start" >1,26 x</text>
-<text x="290.0" y="264.0" class="l" text-anchor="end" >VU1 nativo (gameplay)</text>
-<rect x="300.0" y="249" width="129.0" height="22" rx="3" class="pend"/>
-<text x="310.0" y="264.0" class="p" text-anchor="start" >[PENDENTE]</text>
-<text x="290.0" y="300.0" class="l" text-anchor="end" >GS por hardware (gameplay)</text>
-<rect x="300.0" y="285" width="129.0" height="22" rx="3" class="pend"/>
-<text x="310.0" y="300.0" class="p" text-anchor="start" >[PENDENTE]</text>
-<line x1="300.0" x2="300.0" y1="98" y2="314" class="ax"/>
+<rect x="300.0" y="141" width="307.1" height="22" rx="3" fill="#0072B2"><title>VU1 interpretador (maximo): 3,30 x</title></rect>
+<text x="613.1" y="156.0" class="v" text-anchor="start" >3,30 x</text>
+<text x="290.0" y="192.0" class="l" text-anchor="end" >VU1 nativo (113 -&gt; 28 ns/ciclo)</text>
+<rect x="300.0" y="177" width="372.3" height="22" rx="3" fill="#0072B2"><title>VU1 nativo (113 -&gt; 28 ns/ciclo): 4,00 x</title></rect>
+<text x="678.3" y="192.0" class="v" text-anchor="start" >4,00 x</text>
+<text x="290.0" y="228.0" class="l" text-anchor="end" >Rasterizador CPU (replay)</text>
+<rect x="300.0" y="213" width="189.9" height="22" rx="3" fill="#0072B2"><title>Rasterizador CPU (replay): 2,04 x</title></rect>
+<text x="495.9" y="228.0" class="v" text-anchor="start" >2,04 x</text>
+<text x="290.0" y="264.0" class="l" text-anchor="end" >IOP scheduler (22% -&gt; 5%)</text>
+<rect x="300.0" y="249" width="409.5" height="22" rx="3" fill="#0072B2"><title>IOP scheduler (22% -&gt; 5%): 4,40 x</title></rect>
+<text x="715.5" y="264.0" class="v" text-anchor="start" >4,40 x</text>
+<text x="290.0" y="300.0" class="l" text-anchor="end" >Fila cpu-thread: 26,4 -&gt; 33,2</text>
+<rect x="300.0" y="285" width="117.3" height="22" rx="3" fill="#E69F00"><title>Fila cpu-thread: 26,4 -&gt; 33,2: 1,26 x</title></rect>
+<text x="423.3" y="300.0" class="v" text-anchor="start" >1,26 x</text>
+<text x="290.0" y="336.0" class="l" text-anchor="end" >Faixas de CPU: 11,4 -&gt; 18,8</text>
+<rect x="300.0" y="321" width="153.6" height="22" rx="3" fill="#E69F00"><title>Faixas de CPU: 11,4 -&gt; 18,8: 1,65 x</title></rect>
+<text x="459.6" y="336.0" class="v" text-anchor="start" >1,65 x</text>
+<text x="290.0" y="372.0" class="l" text-anchor="end" >hw lotes/readbacks: 12,2 -&gt; 18,8</text>
+<rect x="300.0" y="357" width="143.3" height="22" rx="3" fill="#E69F00"><title>hw lotes/readbacks: 12,2 -&gt; 18,8: 1,54 x</title></rect>
+<text x="449.3" y="372.0" class="v" text-anchor="start" >1,54 x</text>
+<text x="290.0" y="408.0" class="l" text-anchor="end" >hw thread propria: 18,8 -&gt; ~21,5</text>
+<rect x="300.0" y="393" width="106.1" height="22" rx="3" fill="#E69F00"><title>hw thread propria: 18,8 -&gt; ~21,5: 1,14 x</title></rect>
+<text x="412.1" y="408.0" class="v" text-anchor="start" >1,14 x</text>
+<text x="290.0" y="444.0" class="l" text-anchor="end" >EE sem sono: 18,7 -&gt; 22,3</text>
+<rect x="300.0" y="429" width="110.8" height="22" rx="3" fill="#E69F00"><title>EE sem sono: 18,7 -&gt; 22,3: 1,19 x</title></rect>
+<text x="416.8" y="444.0" class="v" text-anchor="start" >1,19 x</text>
+<text x="290.0" y="480.0" class="l" text-anchor="end" >Cache de VFS (180,9 s -&gt; 179,4 s)</text>
+<rect x="300.0" y="465" width="94.0" height="22" rx="3" fill="#E69F00"><title>Cache de VFS (180,9 s -&gt; 179,4 s): 1,01 x</title></rect>
+<text x="400.0" y="480.0" class="v" text-anchor="start" >1,01 x</text>
+<line x1="300.0" x2="300.0" y1="98" y2="494" class="ax"/>
 </svg>

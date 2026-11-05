@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="820" height="438" viewBox="0 0 820 438" role="img" aria-labelledby="t d">
-<title id="t">Resumo de recursos por configuracao</title><desc id="d">CPU medio (% de 16 threads) por renderer; RAM e GPU entram no JSON de resumo.</desc>
+<title id="t">CPU medio (nucleos) por configuracao</title><desc id="d">Media da corrida inteira, sem a amostra final negativa. RAM e GPU: tabela do relatorio.</desc>
 <style>
 .t{font:600 18px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .s{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#6e7781}
 .l{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .v{font:600 13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a}
@@ -8,32 +8,35 @@
 .pend{fill:none;stroke:#8c959f;stroke-width:1.5;stroke-dasharray:5 4}
 @media (prefers-color-scheme: dark){.t,.l,.v{fill:#c9d1d9} .s,.p{fill:#8b949e}}
 </style>
-<text x="20.0" y="28.0" class="t" text-anchor="start" >Resumo de recursos por configuracao</text>
-<text x="20.0" y="48.0" class="s" text-anchor="start" >CPU medio (% de 16 threads) por renderer; RAM e GPU entram no JSON de resumo.</text>
+<text x="20.0" y="28.0" class="t" text-anchor="start" >CPU medio (nucleos) por configuracao</text>
+<text x="20.0" y="48.0" class="s" text-anchor="start" >Media da corrida inteira, sem a amostra final negativa. RAM e GPU: tabela do relatorio.</text>
 <rect x="20.0" y="59.0" width="14" height="14" rx="3" fill="#0072B2"/>
-<text x="40.0" y="70.0" class="l" text-anchor="start" >CPU medio</text>
+<text x="40.0" y="70.0" class="l" text-anchor="start" >CPU medio (nucleos)</text>
 <line x1="70.0" x2="800.0" y1="388.0" y2="388.0" class="gr"/>
 <text x="62.0" y="392.0" class="l" text-anchor="end" >0</text>
 <line x1="70.0" x2="800.0" y1="334.0" y2="334.0" class="gr"/>
-<text x="62.0" y="338.0" class="l" text-anchor="end" >0,2</text>
+<text x="62.0" y="338.0" class="l" text-anchor="end" >0,5</text>
 <line x1="70.0" x2="800.0" y1="280.0" y2="280.0" class="gr"/>
-<text x="62.0" y="284.0" class="l" text-anchor="end" >0,4</text>
+<text x="62.0" y="284.0" class="l" text-anchor="end" >1</text>
 <line x1="70.0" x2="800.0" y1="226.0" y2="226.0" class="gr"/>
-<text x="62.0" y="230.0" class="l" text-anchor="end" >0,6</text>
+<text x="62.0" y="230.0" class="l" text-anchor="end" >1,5</text>
 <line x1="70.0" x2="800.0" y1="172.0" y2="172.0" class="gr"/>
-<text x="62.0" y="176.0" class="l" text-anchor="end" >0,8</text>
+<text x="62.0" y="176.0" class="l" text-anchor="end" >2</text>
 <line x1="70.0" x2="800.0" y1="118.0" y2="118.0" class="gr"/>
-<text x="62.0" y="122.0" class="l" text-anchor="end" >1</text>
+<text x="62.0" y="122.0" class="l" text-anchor="end" >2,5</text>
 <line x1="70.0" x2="70.0" y1="118" y2="388" class="ax"/>
 <line x1="70.0" x2="800.0" y1="388" y2="388" class="ax"/>
-<text x="62.0" y="108.0" class="s" text-anchor="end" >% CPU</text>
-<rect x="159.7" y="354.0" width="64.0" height="34" rx="3" class="pend"/>
-<text x="191.7" y="374.0" class="p" text-anchor="middle" >[PENDENTE]</text>
-<text x="191.7" y="410.0" class="l" text-anchor="middle" >CPU</text>
-<rect x="403.0" y="354.0" width="64.0" height="34" rx="3" class="pend"/>
-<text x="435.0" y="374.0" class="p" text-anchor="middle" >[PENDENTE]</text>
-<text x="435.0" y="410.0" class="l" text-anchor="middle" >CPU em thread</text>
-<rect x="646.3" y="354.0" width="64.0" height="34" rx="3" class="pend"/>
-<text x="678.3" y="374.0" class="p" text-anchor="middle" >[PENDENTE]</text>
-<text x="678.3" y="410.0" class="l" text-anchor="middle" >D3D11 ROV</text>
+<text x="62.0" y="108.0" class="s" text-anchor="end" >nucleos</text>
+<rect x="129.2" y="249.8" width="64.0" height="138.2" rx="3" fill="#0072B2"><title>CPU medio (nucleos): 1,28 nucleos</title></rect>
+<text x="161.2" y="243.8" class="v" text-anchor="middle" >1,28</text>
+<text x="161.2" y="410.0" class="l" text-anchor="middle" >CPU serial</text>
+<rect x="311.8" y="161.2" width="64.0" height="226.8" rx="3" fill="#0072B2"><title>CPU medio (nucleos): 2,10 nucleos</title></rect>
+<text x="343.8" y="155.2" class="v" text-anchor="middle" >2,10</text>
+<text x="343.8" y="410.0" class="l" text-anchor="middle" >CPU em faixas</text>
+<rect x="494.2" y="259.5" width="64.0" height="128.5" rx="3" fill="#0072B2"><title>CPU medio (nucleos): 1,19 nucleos</title></rect>
+<text x="526.2" y="253.5" class="v" text-anchor="middle" >1,19</text>
+<text x="526.2" y="410.0" class="l" text-anchor="middle" >GS hardware</text>
+<rect x="676.8" y="261.6" width="64.0" height="126.4" rx="3" fill="#0072B2"><title>CPU medio (nucleos): 1,17 nucleos</title></rect>
+<text x="708.8" y="255.6" class="v" text-anchor="middle" >1,17</text>
+<text x="708.8" y="410.0" class="l" text-anchor="middle" >GS hardware serial</text>
 </svg>

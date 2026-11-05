@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="820" height="338" viewBox="0 0 820 338" role="img" aria-labelledby="t d">
-<title id="t">Tempo de build (escala logaritmica)</title><desc id="d">Escala log: cada divisao e 10x. Menor e melhor.</desc>
+<title id="t">Tempo de build (escala logaritmica)</title><desc id="d">Escala log: cada divisao e 10x. Menor e melhor. O rebuild completo continua inevitavel uma vez; o ganho e no ciclo de edicao.</desc>
 <style>
 .t{font:600 18px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .s{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#6e7781}
 .l{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .v{font:600 13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a}
@@ -9,7 +9,7 @@
 @media (prefers-color-scheme: dark){.t,.l,.v{fill:#c9d1d9} .s,.p{fill:#8b949e}}
 </style>
 <text x="20.0" y="28.0" class="t" text-anchor="start" >Tempo de build (escala logaritmica)</text>
-<text x="20.0" y="48.0" class="s" text-anchor="start" >Escala log: cada divisao e 10x. Menor e melhor.</text>
+<text x="20.0" y="48.0" class="s" text-anchor="start" >Escala log: cada divisao e 10x. Menor e melhor. O rebuild completo continua inevitavel uma vez; o ganho e no ciclo de edicao.</text>
 <rect x="20.0" y="59.0" width="14" height="14" rx="3" fill="#0072B2"/>
 <text x="40.0" y="70.0" class="l" text-anchor="start" >Antes</text>
 <rect x="82.0" y="59.0" width="14" height="14" rx="3" fill="#E69F00"/>
@@ -33,8 +33,8 @@
 <text x="290.0" y="264.0" class="l" text-anchor="end" >Editar header comum (depois)</text>
 <rect x="300.0" y="249" width="165.8" height="22" rx="3" fill="#E69F00"><title>Editar header comum (depois): 34,6 s</title></rect>
 <text x="471.8" y="264.0" class="v" text-anchor="start" >34,6 s</text>
-<text x="290.0" y="300.0" class="l" text-anchor="end" >Rebuild completo (depois)</text>
-<rect x="300.0" y="285" width="129.0" height="22" rx="3" class="pend"/>
-<text x="310.0" y="300.0" class="p" text-anchor="start" >[PENDENTE]</text>
+<text x="290.0" y="300.0" class="l" text-anchor="end" >Rebuild completo (depois, uma vez)</text>
+<rect x="300.0" y="285" width="425.9" height="22" rx="3" fill="#E69F00"><title>Rebuild completo (depois, uma vez): 750 s</title></rect>
+<text x="731.9" y="300.0" class="v" text-anchor="start" >750 s</text>
 <line x1="300.0" x2="300.0" y1="98" y2="314" class="ax"/>
 </svg>

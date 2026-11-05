@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="820" height="438" viewBox="0 0 820 438" role="img" aria-labelledby="t d">
-<title id="t">Antes e depois por cena</title><desc id="d">Menu de idioma (regime estavel) e gameplay 3D; 'Depois' = build CPU de hoje.</desc>
+<title id="t">Antes e depois por cena</title><desc id="d">Menu de idioma (regime estavel; depois ainda nao medido) e gameplay 3D; 'Depois' = GS hardware, medicao final.</desc>
 <style>
 .t{font:600 18px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .s{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#6e7781}
 .l{font:13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a} .v{font:600 13px system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;fill:#57606a}
@@ -9,11 +9,11 @@
 @media (prefers-color-scheme: dark){.t,.l,.v{fill:#c9d1d9} .s,.p{fill:#8b949e}}
 </style>
 <text x="20.0" y="28.0" class="t" text-anchor="start" >Antes e depois por cena</text>
-<text x="20.0" y="48.0" class="s" text-anchor="start" >Menu de idioma (regime estavel) e gameplay 3D; 'Depois' = build CPU de hoje.</text>
+<text x="20.0" y="48.0" class="s" text-anchor="start" >Menu de idioma (regime estavel; depois ainda nao medido) e gameplay 3D; 'Depois' = GS hardware, medicao final.</text>
 <rect x="20.0" y="59.0" width="14" height="14" rx="3" fill="#0072B2"/>
 <text x="40.0" y="70.0" class="l" text-anchor="start" >Antes (baseline congelado)</text>
 <rect x="233.2" y="59.0" width="14" height="14" rx="3" fill="#E69F00"/>
-<text x="253.2" y="70.0" class="l" text-anchor="start" >Depois (CPU, hoje)</text>
+<text x="253.2" y="70.0" class="l" text-anchor="start" >Depois (GS hardware, final)</text>
 <line x1="70.0" x2="800.0" y1="388.0" y2="388.0" class="gr"/>
 <text x="62.0" y="392.0" class="l" text-anchor="end" >0</text>
 <line x1="70.0" x2="800.0" y1="298.0" y2="298.0" class="gr"/>
@@ -32,8 +32,8 @@
 <text x="252.5" y="410.0" class="l" text-anchor="middle" >Menu de idioma</text>
 <rect x="550.5" y="374.7" width="64.0" height="13.3" rx="3" fill="#0072B2"><title>Antes (baseline congelado): 2,96 vsync/s</title></rect>
 <text x="582.5" y="368.7" class="v" text-anchor="middle" >2,96</text>
-<rect x="620.5" y="363.7" width="64.0" height="24.3" rx="3" fill="#E69F00"><title>Depois (CPU, hoje): 5,39 vsync/s</title></rect>
-<text x="652.5" y="357.7" class="v" text-anchor="middle" >5,39</text>
+<rect x="620.5" y="284.7" width="64.0" height="103.3" rx="3" fill="#E69F00"><title>Depois (GS hardware, final): 22,9 vsync/s</title></rect>
+<text x="652.5" y="278.7" class="v" text-anchor="middle" >22,9</text>
 <text x="617.5" y="410.0" class="l" text-anchor="middle" >Gameplay 3D</text>
 <line x1="70.0" x2="800.0" y1="163.0" y2="163.0" stroke="#D55E00" stroke-width="1.5" stroke-dasharray="6 4"/>
 <text x="800.0" y="158.0" class="s" text-anchor="end" >alvo 50 Hz</text>

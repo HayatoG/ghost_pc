@@ -33,7 +33,11 @@ Relatório completo (metodologia, antes/depois, build, CPU/RAM/GPU, pendências)
 
 ![Tempos de build](docs/img/build-tempos.svg)
 
-Itens ainda **[PENDENTE]** (medição final): CPU em thread, VU1 nativo, GS por hardware, CRT, cache de VFS, perfil "depois", uso de CPU/RAM/GPU.
+Medição final (05/11, exe congelado, cena 3D, janela de vsync 7530-7640): **2,96 -> 22,95 vsync/s (~7,8x)**, com CPU serial 7,15, CPU em faixas 22,12, GS por hardware 22,95 (serial 22,71). **Ainda ~2x abaixo do alvo de 50 vsync/s.** Uma corrida por configuração, CSV de 1 s e janela por interpolação (ressalvas no relatório). Editar um header comum: 12+ min -> 34,6 s.
+
+![Uso de CPU](docs/img/uso-cpu.svg)
+
+Itens ainda **[PENDENTE]**: menu de idioma com o build novo, custo do CRT, tocar 1 `.cpp` de gs, link do `build_dev`.
 
 ## Licença dos patches
 Os arquivos em `patches/` são derivados do PS2Recomp e seguem a **GPL-3.0**.
