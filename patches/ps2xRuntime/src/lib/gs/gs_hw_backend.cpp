@@ -349,7 +349,8 @@ std::string GSHwBackend::StatsLine() const
       << " writebacks=" << s.writebacks << " loads=" << s.loads << " upload_pages=" << s.uploadPages << " readbacks=" << s.readbacks
       << " readback_pages=" << s.readbackPages << " tex_rt=" << s.rtSampled << " tex_vram=" << s.vramSampled
       << " feedback=" << s.feedbackCopies << " approx_blend=" << s.unsupportedBlend << " partial_mask=" << s.partialMask
-      << " date=" << s.date << " pabe=" << s.pabe << " flush_key=" << s.flushKey << " flush_coh=" << s.flushCoherence;
+      << " date=" << s.date << " pabe=" << s.pabe << " flush_key=" << s.flushKey << " (target=" << s.whyTarget << " src=" << s.whySource << " pso=" << s.whyPipeline
+      << " tex=" << s.whyTex << " tex1=" << s.whyClut << " other=" << s.whyOther << ")" << " flush_coh=" << s.flushCoherence;
     if (m_device)
     {
         const gs_rhi::GfxStats &g = m_device->Stats();
@@ -461,12 +462,8 @@ bool GSHwBackend::EnsureDeviceLocked()
     if (!m_options.headless && ps2_postfx::crtConfigFromEnv().enabled)
     {
         const std::string src = std::string(ps2_postfx::kCrtHlsl) +
-                                "
-Texture2D<float4> gFrame : register(t0);
-SamplerState gSamp : register(s0);
-"
-                                "float4 PresentFilterMain(PresentFilterIn i) : SV_Target { return float4(CrtFilter(gFrame, gSamp, i.uv01), 1.0); }
-";
+                                "\nTexture2D<float4> gFrame : register(t0);\nSamplerState gSamp : register(s0);\n"
+                                "float4 PresentFilterMain(PresentFilterIn i) : SV_Target { return float4(CrtFilter(gFrame, gSamp, i.uv01), 1.0); }\n";
         std::string ferr;
         if (m_device->SetPresentFilter(src.c_str(), ferr))
             std::cout << "[gs-hw] CRT present filter active (presentation only)" << std::endl;
@@ -494,6 +491,7 @@ bool GSHwBackend::InitGpuLocked(std::string &error)
         {"ZVALUE", 0, VertexFormat::UInt1, 8},
         {"COLOR", 0, VertexFormat::UInt1, 12},
         {"TEXCOORD", 0, VertexFormat::Float4, 16}, // s, t, q, fog
+        {"TEXBASE", 0, VertexFormat::UInt1, 32},
     };
     m_drawProgram = m_device->CreateProgram(pd, layout, sizeof(HwVertex), error);
     if (!m_drawProgram)
@@ -1010,10 +1008,10 @@ void GSHwBackend::SubmitCpuLocked(const GSPrimitiveBatch &batch)
 void GSHwBackend::Submit(const GSPrimitiveBatch &batch)
 {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    if (!m_vram || batch.vertexCount == 0u)
-        return;
     if (!m_deviceAttempted && m_options.headless)
         EnsureDeviceLocked();
+    if (!m_vram || batch.vertexCount == 0u)
+        return;
     if (!gpuActive() || !SubmitGpuLocked(batch))
         SubmitCpuLocked(batch);
 }
@@ -1427,8 +1425,14 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
             PrepareGpuReadLocked(texPages);
             ++m_stats.vramSampled;
         }
+        uint32_t texWord = t.tbp0 & 0x3FFFu;
         if (IsClutPsm(t.psm))
-            dc.tex1[3] = ClutSlotLocked() * kClutSlotWords;
+            texWord |= ClutSlotLocked() << 14;
+        for (uint32_t i = 0; i < vcount; ++i)
+            v[i].tex = texWord;
+        // per-primitive texture base / CLUT slot travel in the vertices; render-target sources keep
+        // the base in the key (they are bound by surface)
+        dc.tex0[0] = source ? t.tbp0 : 0u;
     }
 
     // ---- targets current ----
@@ -1474,7 +1478,16 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
     if (!(key == m_key) || m_vertices.size() + vcount > kMaxBatchVertices)
     {
         if (!m_vertices.empty())
+        {
             ++m_stats.flushKey;
+            const BatchKey &o = m_key;
+            if (o.color != key.color || o.depth != key.depth) ++m_stats.whyTarget;
+            else if (o.source != key.source) ++m_stats.whySource;
+            else if (o.pipeline != key.pipeline || o.pipeline2 != key.pipeline2) ++m_stats.whyPipeline;
+            else if (std::memcmp(o.constants.tex0, key.constants.tex0, sizeof(key.constants.tex0)) != 0) ++m_stats.whyTex;
+            else if (std::memcmp(o.constants.tex1, key.constants.tex1, sizeof(key.constants.tex1)) != 0) ++m_stats.whyClut;
+            else ++m_stats.whyOther;
+        }
         FlushBatchLocked();
         m_key = key;
     }

@@ -1,4 +1,4 @@
-// Native VU1 micro-program executor (PS2X_VU1_NATIVE=1). Design and validation: ghost_pc/docs/vu1-native.md.
+// Native VU micro-program executor (default; PS2X_VU1_NATIVE=0 selects the interpreter). Design and validation: ghost_pc/docs/vu1-native.md.
 //
 // Each instruction pair is translated once (per code generation) into an NPair: the interpreter's decoded
 // usage (stall reads, write latencies) plus a handler kind with its operands already extracted. The executor
@@ -33,6 +33,7 @@
 #include <array>
 #include <bit>
 #include <cfenv>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <new>
@@ -186,6 +187,8 @@ struct VU1InterpreterAccess::Native
         uint8_t writtenVi = 0;   // lowest VI the lower op writes (0 = none), as the interpreter picks it
         uint8_t maxLatency = 0;  // longest VF/VI/ACC write latency of the pair (for the final flush time)
         bool delaysBranch = false;
+        bool elideFlags = false; // MAC/status entry provably unobserved (see flagsUnobserved)
+        uint32_t lookahead[8] = {}; // words of the next 4 pairs, which elideFlags depends on
         bool fullStall = false;  // waits on FDIV/EFU/PATH1: use the interpreter's complete ready computation
         uint8_t stallRegs = 0;   // distinct VF registers read (stallRegList)
         uint8_t stallRegList[4] = {};
@@ -230,9 +233,12 @@ struct VU1InterpreterAccess::Native
         uint64_t maxWriteReady; // latest ready cycle of a VF/VI/ACC write (the interpreter flushes up to it)
         uint64_t kickCycle;     // last cycle whose PATH1 progress has been applied
         Cache *cache;
+        uint32_t codeSize;      // of the current run (the lookahead of the flag elision stays inside it)
         uint32_t pcMask;        // micro address mask of the unit (VU1 0x3FFF, VU0 0x0FFF)
         // MAC/status/clip pipeline as a FIFO: every entry has the same latency, so issue order is commit order
         // (the interpreter's slot array commits them in that same order). Pending entries stay below 16.
+        uint32_t pendingSticky; // sticky bits of elided MAC/status entries, folded into the next entry
+        bool elideNow;          // the current pair's MAC/status entry is elided
         uint32_t flagHead;
         uint32_t flagTail;
         FlagEntry flags[16];
@@ -301,13 +307,22 @@ struct VU1InterpreterAccess::Native
         return entry;
     }
 
-    // Same entry as VU1Interpreter::updateFmacFlags builds (dest is never 0 here).
+    // Same entry as VU1Interpreter::updateFmacFlags builds (dest is never 0 here). An elided entry only leaves its
+    // sticky bits, which the next entry ORs in: that entry commits before anyone can read the status, and its
+    // commit ORs (current | extraSticky) into the sticky field just as the elided commit would have.
     static inline void pushFmacFlags(VU &vu, uint32_t mac, uint32_t status, uint32_t extraSticky)
     {
+        State &st = state(vu);
+        if (st.elideNow)
+        {
+            st.pendingSticky |= (status & 0xFu) | extraSticky;
+            return;
+        }
         FlagEntry &entry = pushFlag(vu, W_MAC | W_STATUS);
         entry.mac = mac;
         entry.status = status;
-        entry.extraSticky = extraSticky;
+        entry.extraSticky = extraSticky | st.pendingSticky;
+        st.pendingSticky = 0u;
     }
 
     // Entries issued in the current cycle lose the given write (as in queueFsset / queueFcset).
@@ -631,6 +646,57 @@ struct VU1InterpreterAccess::Native
         }
     }
 
+    // Does this upper op queue a MAC/status entry (the FMAC cases of classifyUpper with a nonzero dest)?
+    static bool upperMakesFlagEntry(uint32_t upper)
+    {
+        const uint8_t dest = DEST(upper);
+        uint8_t code = static_cast<uint8_t>(upper & 0x3Fu);
+        if ((upper & 0x3Cu) == 0x3Cu)
+            code = static_cast<uint8_t>((upper & 3u) | ((upper >> 4) & 0x7Cu));
+        else if (code > 0x2Fu)
+            return false;
+        if (code == 0x2Eu)
+            return true; // OPMSUB / OPMULA (fixed xyz)
+        const bool fmac = code <= 0x0Fu || (code >= 0x18u && code <= 0x1Cu) || code == 0x1Eu ||
+                          (code >= 0x20u && code <= 0x2Au) || code == 0x2Cu || code == 0x2Du;
+        return fmac && dest != 0u;
+    }
+
+    static uint8_t lowerOpHi(uint32_t lower, uint32_t upper)
+    {
+        if ((upper & 0x80000000u) != 0u || lower == 0u || lower == 0x8000033Cu)
+            return 0xFFu; // I bit (the lower word is an immediate) or NOP
+        return static_cast<uint8_t>((lower >> 25) & 0x7Fu);
+    }
+
+    // The MAC/status entry of pair k (at pc) can never be read when, in straight-line order, pair k+1 queues its
+    // own entry (committed before any later reader: readers in k+1..k+4 are the only ones that could issue
+    // inside [ready(k), ready(k+1)), stalls only push them later) and none of k+1..k+4 reads MAC/status, no
+    // branch in k..k+2 changes which pairs those are, no FSSET in k or k+1 drops a status write, and k does not
+    // halt by itself (D/T). The run loop adds the dynamic part: k is not a delay slot and not the last pair.
+    static bool flagsUnobserved(const NPair &p, const uint8_t *code, uint32_t pc, uint32_t codeSize)
+    {
+        if (pc + 40u > codeSize || p.d.dBit || p.d.tBit || !upperMakesFlagEntry(p.d.upper))
+            return false;
+        uint32_t words[10];
+        std::memcpy(words, code + pc, sizeof(words));
+        if (!upperMakesFlagEntry(words[3]))
+            return false;
+        for (uint32_t k = 0; k < 5u; ++k)
+        {
+            const uint8_t op = lowerOpHi(words[2u * k], words[2u * k + 1u]);
+            const bool branch = op >= 0x20u && op <= 0x2Fu;
+            const bool readsFlags = op == 0x14u || op == 0x16u || op == 0x17u || op == 0x18u || op == 0x1Au || op == 0x1Bu;
+            if (k <= 2u && branch)
+                return false;
+            if (k <= 1u && op == 0x15u) // FSSET
+                return false;
+            if (k >= 1u && readsFlags)
+                return false;
+        }
+        return true;
+    }
+
     static void translate(VU &vu, NPair &p, const uint8_t *code, uint32_t pc)
     {
         NSTAT(translations);
@@ -678,6 +744,10 @@ struct VU1InterpreterAccess::Native
 
         classifyUpper(p);
         classifyLower(p);
+        const uint32_t codeSize = state(vu).codeSize;
+        if (pc + 40u <= codeSize)
+            std::memcpy(p.lookahead, code + pc + 8u, sizeof(p.lookahead));
+        p.elideFlags = flagsUnobserved(p, code, pc, codeSize);
     }
 
     // Ready cycle of a pair. Common case first: no register it reads is still pending (checked per register);
@@ -806,7 +876,8 @@ struct VU1InterpreterAccess::Native
             uint32_t words[2];
             std::memcpy(words, code + pc, sizeof(words));
             // A pair whose words did not change keeps its translation across code uploads.
-            if (cache.stamp[index] == 0u || p.d.lower != words[0] || p.d.upper != words[1])
+            if (cache.stamp[index] == 0u || p.d.lower != words[0] || p.d.upper != words[1] ||
+                (pc + 40u <= cache.codeSize && std::memcmp(p.lookahead, code + pc + 8u, sizeof(p.lookahead)) != 0))
                 translate(vu, p, code, pc);
             cache.stamp[index] = cache.epoch;
         }
@@ -1248,6 +1319,7 @@ struct VU1InterpreterAccess::Native
         Cache &cache = *st.cache;
         const uint64_t generation = isVu1 ? memory->getVU1CodeGeneration() : memory->getVU0CodeGeneration();
         st.pcMask = vu.microAddressMask();
+        st.codeSize = codeSize;
         if (!cache.valid || cache.code != vuCode || cache.memory != memory || cache.codeSize != codeSize ||
             cache.generation != generation)
         {
@@ -1309,6 +1381,7 @@ struct VU1InterpreterAccess::Native
                 syncTo(vu, cycle);
             }
 
+            st.elideNow = p.elideFlags && !s.branchPending && !s.ebit && !s.haltAfterDelaySlot;
             const uint8_t writtenVi = p.writtenVi;
             const int32_t oldVi = writtenVi != 0u ? s.vi[writtenVi] : 0;
             if (p.d.iBit)
@@ -1437,7 +1510,9 @@ bool VU1InterpreterAccess::nativeEnabled(const VU1Interpreter &vu)
     static const bool enabled = []
     {
         const char *const value = std::getenv("PS2X_VU1_NATIVE");
-        return value != nullptr && value[0] == '1';
+        const bool on = value == nullptr || value[0] != '0'; // default on; PS2X_VU1_NATIVE=0 = interpreter
+        std::fprintf(stderr, "[VU] micro-program executor: %s (PS2X_VU1_NATIVE)\n", on ? "native" : "interpreter");
+        return on;
     }();
     (void)vu;
     return enabled;
@@ -1457,4 +1532,6 @@ void VU1InterpreterAccess::nativeReset(VU1Interpreter &vu)
     std::memset(st.regReady, 0, sizeof(st.regReady));
     st.flagHead = 0;
     st.flagTail = 0;
+    st.pendingSticky = 0;
+    st.elideNow = false;
 }

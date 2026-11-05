@@ -145,6 +145,7 @@ struct VSIn
     uint z : ZVALUE;
     uint rgba : COLOR;
     float4 stqf : TEXCOORD0; // s, t, q, fog
+    uint tex : TEXBASE;      // tbp0 | CLUT slot << 14 (per primitive, so they do not break batches)
 };
 
 struct VSOut
@@ -153,7 +154,11 @@ struct VSOut
     noperspective float4 color : COLOR;
     noperspective float3 stq : TEXCOORD0;
     noperspective float fog : TEXCOORD1;
+    nointerpolation uint tex : TEXBASE;
 };
+
+static uint gTbp = 0;
+static uint gClutWords = 0;
 
 VSOut VSMain(VSIn v)
 {
@@ -163,6 +168,7 @@ VSOut VSMain(VSIn v)
     o.color = float4(v.rgba & 0xFFu, (v.rgba >> 8) & 0xFFu, (v.rgba >> 16) & 0xFFu, v.rgba >> 24);
     o.stq = v.stqf.xyz;
     o.fog = v.stqf.w;
+    o.tex = v.tex;
     return o;
 }
 
@@ -199,7 +205,7 @@ int WrapCoord(int c, int size, uint mode, uint rmin, uint rmax)
 
 uint ClutEntry(uint index)
 {
-    uint w = gClut.Load((gTex1.w + (index >> 1)) << 2);
+    uint w = gClut.Load((gClutWords + (index >> 1)) << 2);
     return (index & 1u) ? (w >> 16) : (w & 0xFFFFu);
 }
 
@@ -227,7 +233,7 @@ uint FetchTexel(int su, int sv)
     uint tbw = gTex0.y & 0xFFu;
     uint cpsm = (gTex0.y >> 16) & 0xFFu;
     uint csm = gTex0.y >> 24;
-    uint raw = ReadTexPsm(tpsm, gTex0.x, tbw, (uint)su, (uint)sv);
+    uint raw = ReadTexPsm(tpsm, gTbp, tbw, (uint)su, (uint)sv);
     if (tpsm == 0x00u || tpsm == 0x30u || tpsm == 0x01u || tpsm == 0x31u)
         return ApplyTexa(gTex1.z, tpsm & 0x0Fu, raw);
     if (tpsm == 0x02u || tpsm == 0x0Au || tpsm == 0x32u || tpsm == 0x3Au)
@@ -332,6 +338,8 @@ struct PSOut
 PSOut PSMain(VSOut input)
 {
     uint flags = gMisc.x;
+    gTbp = input.tex & 0x3FFFu;
+    gClutWords = (input.tex >> 14) * 256u;
     float4 cf = input.color;
     uint4 c = uint4(ClampU8((int)cf.r), ClampU8((int)cf.g), ClampU8((int)cf.b), ClampU8((int)cf.a));
     if ((flags & F_TME) != 0u)

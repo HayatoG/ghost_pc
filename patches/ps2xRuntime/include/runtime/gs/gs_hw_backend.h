@@ -25,6 +25,7 @@
 #include "runtime/gs/gs_rhi_hw.h"
 
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -114,7 +115,7 @@ public:
             }
         }
     private:
-        static uint32_t _tzcnt(uint64_t v) { uint32_t n = 0; while (!(v & 1ull)) { v >>= 1; ++n; } return n; }
+        static uint32_t _tzcnt(uint64_t v) { return static_cast<uint32_t>(std::countr_zero(v)); }
     };
 
     // Vertex as the draw program sees it (must match VSIn in gs_hw_shaders.h).
@@ -125,6 +126,7 @@ public:
         uint32_t rgba;
         float s, t, q;
         float fog;
+        uint32_t tex; // tbp0 | CLUT slot << 14
     };
 
     // Draw constants (must match cbuffer Draw in gs_hw_shaders.h).
@@ -258,6 +260,7 @@ private:
         uint64_t rtSampled = 0, vramSampled = 0, feedbackCopies = 0, surfacesCreated = 0;
         uint64_t unsupportedBlend = 0, partialMask = 0, date = 0, pabe = 0;
         uint64_t flushKey = 0, flushCoherence = 0;
+        uint64_t whyTarget = 0, whySource = 0, whyPipeline = 0, whyTex = 0, whyClut = 0, whyOther = 0;
     };
     mutable Stats m_stats{};
 };

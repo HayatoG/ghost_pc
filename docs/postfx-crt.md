@@ -92,6 +92,13 @@ letterbox ja calculado ali) a cada Present; (3) ligar o filtro linear no sampler
 (o `.cpp` do modulo inclui raylib, entao para linkar no backend D3D11 sem raylib mova `crtConfigFromEnv/computeCrtParams` para um
 `.cpp` sem raylib: so a classe `CrtPostFx` depende dele). Os capturas de regressao do backend GPU leem a VRAM, nao a janela: sem filtro.
 
+## Integracao (aplicada)
+
+- `CMakeLists.txt`: `src/lib/ps2_postfx_crt.cpp` em `ps2_runtime`.
+- `ps2_runtime.cpp`: `#include "ps2_postfx_crt.h"`; `CrtPostFx crtFilter; crtFilter.init(&frameTex, crtConfigFromEnv());` depois de criar o `frameTex`;
+  `crtFilter.begin(...)`/`end()` em volta do `DrawTexturePro` do quadro (o overlay de debug fica depois). Desligado, `begin/end` nao fazem nada.
+- Lembrete: `tools/sync_patches.ps1` e a tabela de `patches/README.md` (arquivos novos + variaveis `PS2X_POSTFX_CRT*`) ficam a cargo do lider.
+
 ## Como validar
 
 - Harness (sem jogo, sem build do runtime): `work\postfx_build.bat` (cl direto; linka o `raylib.lib` ja construido) e depois
@@ -100,15 +107,16 @@ letterbox ja calculado ali) a cada Present; (3) ligar o filtro linear no sampler
 - No jogo: `PS2X_POSTFX_CRT=medio` e olhar a janela; comandos `shot` do pad virtual e as regressoes (`tools/regress.ps1`) devem
   sair identicos com e sem o filtro (o filtro nao toca o `frameTex`); sem a variavel, nada muda.
 
+## Validacao feita na integracao (05/11 01:06)
+
+- Build: ninja incorporou as 3 edicoes (a build de outro agente ja as havia compilado); executavel contem `PS2X_POSTFX_CRT`.
+- `regress.ps1 -Scenario menu` com o filtro desligado: IGUAL (md5 84891ae3, diff_px=0).
+- Mesmo cenario com `PS2X_POSTFX_CRT=forte` (log `[postfx] CRT filter on (preset=strong ...)`): `shot` IGUAL (md5 84891ae3): o filtro nao toca o `frameTex`.
+- **Nao verificado**: a aparencia do filtro na janela real do jogo (so no harness com padrao sintetico).
+
 ## Pendencias / limites
 
-- **Integracao ainda nao aplicada** (`work/BUILD_READY` nao existia e havia lock de build). Edicao minima, para aplicar sob o lock:
-  1. `CMakeLists.txt`: `src/lib/ps2_postfx_crt.cpp` em `add_library(ps2_runtime ...)`.
-  2. `ps2_runtime.cpp`: `#include "ps2_postfx_crt.h"`; antes do `while` do loop de apresentacao
-     `ps2_postfx::CrtPostFx crt; crt.init(&frameTex, ps2_postfx::crtConfigFromEnv());`; em volta do `DrawTexturePro` do quadro
-     `crt.begin(&frameTex, presentWidth, presentHeight, dstWidth, dstHeight);` ... `crt.end();` (o overlay de debug fica depois do `end()`).
-  Depois: `tools/sync_patches.ps1`, e atualizar a tabela de `patches/README.md` (arquivos novos + variaveis `PS2X_POSTFX_CRT*`).
-  Ate la o modulo so e exercitado pelo harness.
+- Integracao aplicada em 05/11 (ver "Integracao"). Falta o slot do presenter D3D11 do backend GPU.
 - Valores dos presets nao calibrados; nao ha teste A/B no jogo (decisao do usuario).
 - Entrelacado: quadros 448/512 tratados como progressivos (sem simular campos); `guestLines` pode ser forcado por env.
 - O filtro bilinear do `frameTex` so e ligado quando o CRT esta ativo.

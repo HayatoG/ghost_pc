@@ -9,7 +9,7 @@
 //   gsreplay stats|cfgprof <rec>          draw-state histogram by area / by cycles
 //   gsreplay diffstreams <recA> <recB>    first differing command between two runs
 //   gsreplay fuzz <out.rec> <seed> <n>    synthetic recording (all formats/modes)
-#include "runtime/gs/gs_backend.h"
+#include "gsreplay.h"
 #define NOMINMAX
 #include <windows.h>
 
@@ -28,12 +28,6 @@ GSRasterBackend *CreateBackendNew();
 bool RestoreBackendNew(GSRasterBackend *, std::FILE *);
 
 static constexpr uint32_t kVram = 4u * 1024u * 1024u;
-
-struct Rec
-{
-    uint8_t type;
-    std::vector<uint8_t> data;
-};
 
 struct Impl
 {
@@ -703,8 +697,22 @@ static int cmdDiffStreams(const char *pa, const char *pb)
     return 0;
 }
 
+bool LoadRecordingRaw(const char *path, std::vector<uint8_t> &vram, std::vector<Rec> &records)
+{
+    Impl impl;
+    if (!openAndRestore(path, true, impl, &records))
+        return false;
+    vram = impl.vram;
+    return true;
+}
+
 int main(int argc, char **argv)
 {
+    {
+        const int hw = RunHwCommand(argc, argv);
+        if (hw >= 0)
+            return hw;
+    }
     if (argc >= 4 && std::string(argv[1]) == "diffstreams")
         return cmdDiffStreams(argv[2], argv[3]);
     if (argc >= 3 && std::string(argv[1]) == "abstep")

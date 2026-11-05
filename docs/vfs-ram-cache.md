@@ -4,6 +4,8 @@ Camada de cache **somente no host**: o guest continua vendo exatamente os mesmos
 
 ## Onde o disco emulado e lido
 
+Tres caminhos (o terceiro, `readHostRange`, esta descrito nas medicoes):
+
 | Caminho | Quem usa | Antes | Agora |
 |---|---|---|---|
 | `PS2IopHostAdapter::openHostFile/readHostFile` (`ps2_iop_host.cpp`) | CDVD do IOP (`iop_cdvd.cpp`: `sceCdRead` por setor/offset em `IMAGE.BIN`, `BGM.BIN`, `MOV*.BIN`, modulos IRX) | `fopen` + `fseek` + `fread` sob mutex, por requisicao (setores de 2 KiB) | `VfsCache::readAt(id, offset, ...)` |
@@ -40,11 +42,20 @@ Maquina com 8 GB de RAM e ~4 GB livres -> ~1 GiB de cache; com pouca RAM livre, 
 
 ## Medicoes
 
-[PREENCHER na integracao: tempo de carregamento com e sem cache, regressao `menu`.]
+Build `build_perf` com o cache; `regress.ps1 -Scenario menu`: **IGUAL (md5)**, 0 falhas. Cenario `regress_scene3d.txt` (6 capturas) uma vez com `PS2X_VFS_CACHE_MB=0` e uma com o cache automatico (orcamento 4096 MiB): as 6 capturas tem os mesmos MD5 nas duas execucoes.
+
+| Execucao | Tempo de parede (scene3d) | Estatisticas do cache |
+|---|---|---|
+| sem cache (`MB=0`) | 180,9 s | n/a |
+| com cache (auto, 4 GiB) | 179,4 s | hits=11 misses=36, servido 16 MiB, lido do disco 96 MiB, bypass (MOV) 65 MiB, espera de leitura 66,8 ms |
+
+**Ganho medido: nenhum perceptivel (~0,8%, dentro do ruido).** Neste cenario o tempo e dominado pela emulacao (relogio por vsync de guest com FPS ilimitado), e a E/S total e pequena (espera de leitura de 67 ms no total). O cache ainda nao tem como mostrar ganho aqui; o beneficio esperado fica para discos lentos (HDD, rede) e telas de carregamento reais com arquivos grandes. O custo e leitura em blocos de 1 MiB: 96 MiB lidos do disco para 16 MiB servidos (amplificacao ~6x em leituras pequenas e esparsas; reduzivel com `PS2X_VFS_CACHE_BLOCK_KB` menor).
+
+Alem dos dois pontos da tabela acima, o caminho real do `sceCdRead` do EE (`readHostRange` em `Kernel/Stubs/Helpers/Support.h`, que antes abria um `ifstream` a cada leitura) tambem passa pelo cache; o resto zerado em leitura curta e os codigos de erro foram preservados.
 
 ## Riscos e limites
 
 - O cache duplica na RAM do host o que o SO ja guarda no cache de arquivos; o ganho esperado vem de (a) menos syscalls/seeks por setor de 2 KiB, (b) read-ahead em thread de fundo, (c) menos contencao do mutex do host adapter. Em maquinas com SSD e arquivos ja quentes no SO, o ganho pode ser pequeno.
 - Leituras diretas com falha de E/S em bloco refazem a leitura do trecho (sem cache); nao ha repeticao automatica.
 - O prefixo `MOV` como padrao de stream e heuristica de nome (configuravel pela env); um jogo com outro nome de filme precisa ajustar `PS2X_VFS_CACHE_SKIP`.
-- Os novos arquivos (`ps2_vfs_cache.h`, `tests/vfs_cache_test.cpp`) precisam entrar em `tools/sync_patches.ps1` (rodar o script) e na tabela de `patches/README.md`.
+- Arquivos tocados: `ps2_vfs_cache.h` (novo), `ps2_vfs.cpp`, `ps2_iop_host.cpp`, `Kernel/Stubs/Helpers/Support.h`, `tests/vfs_cache_test.cpp` (novo). Eles precisam entrar em `tools/sync_patches.ps1` (rodar o script) e na tabela de `patches/README.md`.

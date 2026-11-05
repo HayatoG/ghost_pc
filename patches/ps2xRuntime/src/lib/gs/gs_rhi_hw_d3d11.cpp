@@ -1018,8 +1018,7 @@ float4 PSMain(VSOut i) : SV_Target { return float4(gSource.Sample(gSampler, i.uv
             m_filterPs.Reset();
             if (!source)
                 return true;
-            const std::string full = std::string("struct PresentFilterIn { float4 pos : SV_Position; float2 uv : TEXCOORD0; float2 uv01 : TEXCOORD1; };
-") + source;
+            const std::string full = std::string("struct PresentFilterIn { float4 pos : SV_Position; float2 uv : TEXCOORD0; float2 uv01 : TEXCOORD1; };\n") + source;
             ComPtr<ID3DBlob> blob;
             if (!Compile(full.c_str(), "gs_hw_present_filter", "PresentFilterMain", "ps_5_0", {}, blob, error) ||
                 FAILED(m_device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, m_filterPs.GetAddressOf())))

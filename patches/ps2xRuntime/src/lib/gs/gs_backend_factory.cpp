@@ -4,6 +4,7 @@
 #include "runtime/gs/gs_thread_backend.h"
 #if defined(PS2X_HAS_GS_GPU)
 #include "runtime/gs/gs_gpu_backend.h"
+#include "runtime/gs/gs_hw_backend.h"
 #endif
 
 #include <algorithm>
@@ -76,6 +77,30 @@ namespace
                   << " window=" << (options.showWindow ? 1 : 0) << std::endl;
         return std::make_unique<GSGpuBackend>(std::move(config), options);
     }
+
+    // PS2X_GS=hw: hardware renderer (render targets, GPU blend/depth). PS2X_GS_SCALE=1..8 internal
+    // resolution (limited by the VRAM budget), PS2X_GS_WINDOW=0 hides its window, PS2X_GS_VSYNC=1,
+    // PS2X_GS_DEBUG=1 (D3D11 debug layer), PS2X_GS_FILTER=linear (present), PS2X_GS_HW_CPUFRAME=N (every
+    // Nth present also returns a CPU-composed frame to the host window / shots; 1 = always),
+    // PS2X_GS_HW_VERBOSE=1 (statistics every 300 presents). The CRT filter (PS2X_POSTFX_CRT) applies to
+    // its window only.
+    std::unique_ptr<GSRasterBackend> MakeHwBackend()
+    {
+        GSHwBackend::Options options{};
+        const std::string scale = EnvLower("PS2X_GS_SCALE");
+        if (!scale.empty())
+            options.scale = static_cast<uint32_t>(std::clamp<unsigned long>(std::strtoul(scale.c_str(), nullptr, 10), 1ul, 8ul));
+        const std::string window = EnvLower("PS2X_GS_WINDOW");
+        options.showWindow = !(window == "0" || window == "false" || window == "off" || window == "no");
+        options.vsync = EnvFlag("PS2X_GS_VSYNC");
+        options.debugLayer = EnvFlag("PS2X_GS_DEBUG");
+        options.linearPresent = EnvLower("PS2X_GS_FILTER") == "linear";
+        options.cpuFrameEvery = static_cast<uint32_t>(std::strtoul(EnvLower("PS2X_GS_HW_CPUFRAME").c_str(), nullptr, 10));
+        options.verbose = EnvFlag("PS2X_GS_HW_VERBOSE");
+        std::cout << "[gs-hw] PS2X_GS=hw: GSHwBackend scale=" << options.scale << " window=" << (options.showWindow ? 1 : 0)
+                  << " cpu_frame_every=" << options.cpuFrameEvery << std::endl;
+        return std::make_unique<GSHwBackend>(options);
+    }
 #endif
 }
 
@@ -84,7 +109,15 @@ std::unique_ptr<GSRasterBackend> CreateGSRasterBackendFromEnv()
     const std::string choice = EnvLower("PS2X_GS");
     if (choice == "cpu-thread" || choice == "cpu-mt")
         return MakeThreadedCpuBackend();
-    if (choice == "d3d11")
+    if (choice == "hw")
+    {
+#if defined(PS2X_HAS_GS_GPU)
+        return MakeHwBackend();
+#else
+        std::cerr << "[gs-hw] PS2X_GS=hw not built in (PS2X_ENABLE_GS_D3D11=OFF or not Windows); using cpu" << std::endl;
+#endif
+    }
+    else if (choice == "d3d11")
     {
 #if defined(PS2X_HAS_GS_GPU)
         return MakeD3D11Backend();
