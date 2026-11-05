@@ -4,19 +4,19 @@ Medição final de 05/11/2026. Os números e as fontes de cada gráfico estão e
 
 ## 1. Resumo executivo
 
-A cena 3D de gameplay foi de **2,96 para 22,95 vsync/s: cerca de 7,8x** (22,95 / 2,96 = 7,75). Mesmo assim, **ainda estamos cerca de 2x abaixo do alvo de 50 vsync/s** (46% do alvo). A meta não foi atingida.
+A cena 3D de gameplay foi de **2,96 para 28,3 vsync/s: cerca de 9,6x** (28,33 / 2,96 = 9,57; janela 7530-7620 no `hw`, a corrida terminou antes de 7640). Mesmo assim, **ainda estamos cerca de 2x abaixo do alvo de 50 vsync/s** (57% do alvo). A meta não foi atingida.
 
-Medição final: mesmo executável congelado (`work/final_exe`, md5 em `logs/perf/final_exe.md5`), mesmo pad script `scene3d`, máquina quase parada, janela de vsync acumulado 7530-7640, `tools/perf_run.ps1`, uma corrida por configuração.
+Medição final (`final3`, 05/11 06:08-06:19, exe construído depois de todas as rodadas; substitui a anterior de 22,95): mesmo executável congelado (`work/final_exe`, md5 em `logs/perf/final_exe.md5`), mesmo pad script `scene3d`, máquina quase parada, janela de vsync acumulado 7530-7640, `tools/perf_run.ps1`, uma corrida por configuração.
 
 | Configuração | vsync/s na janela | Carga do sistema ao iniciar | CPU médio (núcleos) | RAM de pico | GPU médio |
 |---|---:|---:|---:|---:|---:|
 | Baseline (antes de tudo, 04/11) | 2,96 | n/d | n/d (sem medição de CPU/RAM) | n/d | n/d |
-| CPU serial | 7,15 | 16% | 1,28 | 229 MB | 4,0% |
-| CPU em faixas (8 trabalhadores) | 22,12 | 3% | 2,10 | 300 MB | 5,6% |
-| **GS por hardware (thread própria)** | **22,95** | 0% | 1,19 | 333 MB | 12,6% |
-| GS por hardware serial | 22,71 | 12% | 1,17 | 329 MB | 12,6% |
+| CPU serial | 8,74 | 0% | 1,24 | 228 MB | 3,9% |
+| CPU em faixas (8 trabalhadores) | 22,59 | 2% | 2,07 | 290 MB | 5,6% |
+| **GS por hardware (thread própria)** | **28,33** (janela 7530-7620) | 0% | 1,15 | 334 MB | 12,3% |
+| GS por hardware serial | 25,07 | 3% | 1,12 | 327 MB | 12,8% |
 
-Progressão: 2,96 -> 7,15 (CPU serial) -> 22,12 (faixas) -> 22,95 (hardware). Nota: CPU em faixas e GS por hardware chegam praticamente ao mesmo ponto (22,1 a 23,0); a diferença de 3,7% entre elas está dentro do que esperamos de ruído de uma corrida única. A thread própria do GS por hardware (22,95) contra a serial (22,71) também não se separa do ruído.
+Progressão: 2,96 -> 8,74 (CPU serial) -> 22,59 (faixas) -> 25,07 (hardware serial) -> 28,33 (hardware com thread própria). Cada número é uma corrida só (ruído de ±10%). O `hw` não tem valor na janela inteira porque a corrida terminou antes do vsync 7640; 28,33 é a média em 7530-7620. Experimentos sem ganho: `timeBeginPeriod(1)` (opt-in `PS2X_TIMER_RES_MS`) e thread do VU1 (`PS2X_THREADS=vu`, 4,3 vsync/s).
 
 | Outras métricas | Antes | Depois | Estado |
 |---|---:|---:|---|
@@ -152,7 +152,7 @@ Atribuir o ganho de 2,96 para 22,95 a cada mudança exige medir uma por vez; hoj
 
 ## 8. Limitações e riscos
 
-- A meta (50 vsync/s na gameplay 3D) **não foi atingida**: o melhor caso medido (22,95) está cerca de 2x abaixo.
+- A meta (50 vsync/s na gameplay 3D) **não foi atingida**: o melhor caso medido (28,3) está cerca de 2x abaixo.
 - Uma corrida por configuração, sem repetição estatística; janela por interpolação sobre CSV de 1 s (seção 2, ressalvas 1 e 2).
 - As três configurações rápidas (22,1 a 23,0) não se distinguem de forma conclusiva.
 - `cpu-thread` aumenta a latência de `Present` (0,3-0,9 s na gameplay) com a fila de 32 MiB.

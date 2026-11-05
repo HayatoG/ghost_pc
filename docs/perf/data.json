@@ -251,24 +251,24 @@
       "unidade": "vsync/s",
       "valor": {
         "baseline": 2.96,
-        "cpu": 7.15,
-        "cpu_thread": 22.12,
-        "hw": 22.95,
-        "hw_serial": 22.71
+        "cpu": 8.74,
+        "cpu_thread": 22.59,
+        "hw": 28.33,
+        "hw_serial": 25.07
       },
       "estado": "medido",
-      "fonte": "logs/perf/final_*.summary.json (exe congelado work/final_exe, perf_run.ps1, janela vsync 7530-7640, 05/11)"
+      "fonte": "logs/perf/final3_*.summary.json (exe congelado work/final_exe, perf_run.ps1, janela vsync 7530-7640, 05/11)"
     },
     {
       "id": "gameplay3d_progressao",
       "unidade": "x",
       "valor": {
         "de": 2.96,
-        "para": 22.95,
-        "razao": 7.75
+        "para": 28.33,
+        "razao": 9.57
       },
       "estado": "medido",
-      "fonte": "22,95 / 2,96 = 7,75x (baseline congelado de 04/11 contra a medicao final de 05/11)"
+      "fonte": "28,33 / 2,96 = 9,57x (hw: janela 7530-7620, a corrida terminou antes de 7640) (baseline congelado de 04/11 contra a medicao final de 05/11)"
     },
     {
       "id": "recursos_final",
@@ -308,17 +308,17 @@
         }
       },
       "estado": "medido",
-      "fonte": "logs/perf/final_*.cpu.csv; nucleos_medio recalculado sem a ultima amostra (negativa, tempo de CPU do processo que encerra); o campo cpu_cores_mean dos summary.json inclui essa amostra e subestima"
+      "fonte": "logs/perf/final3_*.cpu.csv; nucleos_medio recalculado sem a ultima amostra (negativa, tempo de CPU do processo que encerra); o campo cpu_cores_mean dos summary.json inclui essa amostra e subestima"
     },
     {
       "id": "tempo_script_s",
       "unidade": "s",
       "valor": {
         "baseline_cpu": 289.3,
-        "cpu": 178.8,
-        "cpu_thread": 161.6,
-        "hw": 160.9,
-        "hw_serial": 161.4
+        "cpu": 175.7,
+        "cpu_thread": 162.1,
+        "hw": 159.1,
+        "hw_serial": 161.2
       },
       "estado": "medido",
       "fonte": "baseline: ultima linha de t_s de logs/final/baseline_cpu.csv; demais: duration_s dos summary.json (inclui abertura do processo)"
@@ -497,25 +497,25 @@
         },
         {
           "name": "CPU serial",
-          "csv": "logs/perf/final_cpu.fps.csv",
+          "csv": "logs/perf/final3_cpu.fps.csv",
           "x": "t_s",
           "y": "guest_vsync_hz"
         },
         {
           "name": "CPU em faixas",
-          "csv": "logs/perf/final_cputhread.fps.csv",
+          "csv": "logs/perf/final3_cputhread.fps.csv",
           "x": "t_s",
           "y": "guest_vsync_hz"
         },
         {
           "name": "GS hardware (thread)",
-          "csv": "logs/perf/final_hw.fps.csv",
+          "csv": "logs/perf/final3_hw.fps.csv",
           "x": "t_s",
           "y": "guest_vsync_hz"
         },
         {
           "name": "GS hardware serial",
-          "csv": "logs/perf/final_hwserial.fps.csv",
+          "csv": "logs/perf/final3_hwserial.fps.csv",
           "x": "t_s",
           "y": "guest_vsync_hz"
         }
@@ -524,7 +524,7 @@
         "value": 50,
         "label": "alvo 50 Hz"
       },
-      "fonte": "logs/final/baseline_cpu.csv e logs/perf/final_*.fps.csv"
+      "fonte": "logs/final/baseline_cpu.csv e logs/perf/final3_*.fps.csv"
     },
     {
       "id": "fps-serie-vsync",
@@ -552,30 +552,30 @@
         },
         {
           "name": "CPU serial",
-          "csv": "logs/perf/final_cpu.fps.csv",
+          "csv": "logs/perf/final3_cpu.fps.csv",
           "x": "t_s",
           "y": "guest_vsync_hz"
         },
         {
           "name": "CPU em faixas",
-          "csv": "logs/perf/final_cputhread.fps.csv",
+          "csv": "logs/perf/final3_cputhread.fps.csv",
           "x": "t_s",
           "y": "guest_vsync_hz"
         },
         {
           "name": "GS hardware (thread)",
-          "csv": "logs/perf/final_hw.fps.csv",
+          "csv": "logs/perf/final3_hw.fps.csv",
           "x": "t_s",
           "y": "guest_vsync_hz"
         },
         {
           "name": "GS hardware serial",
-          "csv": "logs/perf/final_hwserial.fps.csv",
+          "csv": "logs/perf/final3_hwserial.fps.csv",
           "x": "t_s",
           "y": "guest_vsync_hz"
         }
       ],
-      "fonte": "logs/final/baseline_cpu.csv e logs/perf/final_*.fps.csv"
+      "fonte": "logs/final/baseline_cpu.csv e logs/perf/final3_*.fps.csv"
     },
     {
       "id": "host-composicao",
@@ -870,7 +870,7 @@
           "group": "Depois"
         }
       ],
-      "fonte": "baseline_cpu.csv; duration_s de logs/perf/final_*.summary.json"
+      "fonte": "baseline_cpu.csv; duration_s de logs/perf/final3_*.summary.json"
     },
     {
       "id": "uso-cpu",
@@ -882,30 +882,30 @@
       "series": [
         {
           "name": "CPU serial",
-          "csv": "logs/perf/final_cpu.cpu.csv",
+          "csv": "logs/perf/final3_cpu.cpu.csv",
           "x": "t_s",
           "y": "cpu_cores"
         },
         {
           "name": "CPU em faixas",
-          "csv": "logs/perf/final_cputhread.cpu.csv",
+          "csv": "logs/perf/final3_cputhread.cpu.csv",
           "x": "t_s",
           "y": "cpu_cores"
         },
         {
           "name": "GS hardware (thread)",
-          "csv": "logs/perf/final_hw.cpu.csv",
+          "csv": "logs/perf/final3_hw.cpu.csv",
           "x": "t_s",
           "y": "cpu_cores"
         },
         {
           "name": "GS hardware serial",
-          "csv": "logs/perf/final_hwserial.cpu.csv",
+          "csv": "logs/perf/final3_hwserial.cpu.csv",
           "x": "t_s",
           "y": "cpu_cores"
         }
       ],
-      "fonte": "logs/perf/final_*.cpu.csv"
+      "fonte": "logs/perf/final3_*.cpu.csv"
     },
     {
       "id": "uso-ram-gpu",
