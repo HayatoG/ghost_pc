@@ -9,7 +9,14 @@
 #endif
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cmath>
+#include <condition_variable>
+#include <functional>
+#include <mutex>
+#include <thread>
+#include <vector>
 #include <cstdlib>
 #include <cstring>
 #include <iomanip>
@@ -418,6 +425,186 @@ namespace
                 advance();
             }
         }
+    }
+
+    // Small pool for CPU-only work of the backend (upload swizzle). Workers sleep on a condition
+    // variable when idle (no spinning); the caller also runs items, so Run() with 0 workers is serial.
+    // PS2X_GS_HW_WORKERS=N|auto (auto = min(4, cores/4); absent or 0 = off). Never destroyed (no join at exit).
+    class HwWorkerPool
+    {
+    public:
+        static HwWorkerPool &Get()
+        {
+            static HwWorkerPool *pool = new HwWorkerPool();
+            return *pool;
+        }
+        uint32_t workers() const { return static_cast<uint32_t>(m_threads.size()); }
+        uint32_t minBytes() const { return m_minBytes; }
+
+        // Runs fn(0..count-1) on the workers and the calling thread; returns when all are done.
+        void Run(uint32_t count, const std::function<void(uint32_t)> &fn)
+        {
+            std::lock_guard<std::mutex> runLock(m_runMutex);
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                m_fn = &fn;
+                m_count = count;
+                m_next.store(0u);
+                m_done = 0u;
+                ++m_generation;
+            }
+            m_wake.notify_all();
+            Work(fn, count);
+            std::unique_lock<std::mutex> lock(m_mutex);
+            m_finished.wait(lock, [&] { return m_done >= m_count && m_active == 0u; });
+            m_fn = nullptr;
+        }
+
+    private:
+        HwWorkerPool()
+        {
+            const uint32_t cores = std::max(1u, std::thread::hardware_concurrency());
+            // Default off: in game the GS thread is not the limit yet (docs/gs-hw-backend.md 5.5).
+            uint32_t n = 0;
+            if (const char *env = std::getenv("PS2X_GS_HW_WORKERS"); env && *env)
+                n = std::string(env) == "auto" ? std::min(4u, cores / 4u) : static_cast<uint32_t>(std::clamp(std::atoi(env), 0, 16));
+            m_minBytes = 8u * 1024u;
+            if (const char *env = std::getenv("PS2X_GS_HW_PAR_MIN_KB"); env && *env)
+                m_minBytes = static_cast<uint32_t>(std::max(1, std::atoi(env))) * 1024u;
+            for (uint32_t i = 0; i < n; ++i)
+                m_threads.emplace_back([this] { Loop(); }).detach();
+            std::cout << "[gs-hw] cpu workers=" << n << " (upload swizzle >= " << (m_minBytes / 1024u) << " KiB)" << std::endl;
+        }
+
+        void Work(const std::function<void(uint32_t)> &fn, uint32_t count)
+        {
+            for (;;)
+            {
+                const uint32_t i = m_next.fetch_add(1u);
+                if (i >= count)
+                    return;
+                fn(i);
+                std::lock_guard<std::mutex> lock(m_mutex);
+                if (++m_done >= m_count)
+                    m_finished.notify_all();
+            }
+        }
+
+        void Loop()
+        {
+            uint64_t seen = 0;
+            for (;;)
+            {
+                const std::function<void(uint32_t)> *fn = nullptr;
+                uint32_t count = 0;
+                {
+                    std::unique_lock<std::mutex> lock(m_mutex);
+                    m_wake.wait(lock, [&] { return m_generation != seen; });
+                    seen = m_generation;
+                    if (!m_fn)
+                        continue;
+                    fn = m_fn;
+                    count = m_count;
+                    ++m_active;
+                }
+                Work(*fn, count);
+                std::lock_guard<std::mutex> lock(m_mutex);
+                --m_active;
+                m_finished.notify_all();
+            }
+        }
+
+        std::vector<std::thread> m_threads;
+        std::mutex m_runMutex, m_mutex;
+        std::condition_variable m_wake, m_finished;
+        const std::function<void(uint32_t)> *m_fn = nullptr;
+        uint32_t m_count = 0, m_done = 0, m_active = 0;
+        uint64_t m_generation = 0;
+        std::atomic<uint32_t> m_next{0};
+        uint32_t m_minBytes = 8u * 1024u;
+    };
+
+    // UploadPixels split by bands of page rows across the pool. Same bytes as the serial call: the
+    // split is used only when the destination rectangle neither wraps horizontally (dsax + rrw within
+    // the buffer width) nor wraps the 4 MiB memory, so distinct pixels hit distinct 32-bit words and
+    // distinct page rows hit distinct bytes (P4 nibble pairs stay inside one band). Block bits are
+    // collected per chunk and merged afterwards.
+    template <GSMem::PixelStorageMode M, typename Table>
+    void UploadPixelsParallel(const Table &table, uint8_t *vram, uint32_t dbp, uint32_t dbw, uint32_t dsax, uint32_t rrw, uint32_t &x,
+                              uint32_t &y, uint32_t &copied, uint32_t total, const uint8_t *data, uint32_t size, uint32_t *blocks)
+    {
+        using Traits = GSMem::PixelStorageTraits<M>;
+        HwWorkerPool &pool = HwWorkerPool::Get();
+        constexpr uint32_t pw = static_cast<uint32_t>(Traits::PageExtent().x), ph = static_cast<uint32_t>(Traits::PageExtent().y);
+        constexpr uint32_t bpp = (M == GSMem::C32 || M == GSMem::Z32) ? 4u
+                               : (M == GSMem::C24 || M == GSMem::Z24) ? 3u
+                               : (M == GSMem::C16 || M == GSMem::C16S || M == GSMem::Z16 || M == GSMem::Z16S) ? 2u
+                               : (M == GSMem::P8 || M == GSMem::P8H) ? 1u : 0u;
+        const uint32_t ppr = (dbw * 64u) / pw;
+        const auto serial = [&] { UploadPixels<M>(table, vram, dbp, dbw, dsax, rrw, x, y, copied, total, data, size, blocks); };
+        if (pool.workers() == 0u || size < pool.minBytes() || copied >= total || rrw == 0u || ppr == 0u || dsax + rrw > ppr * pw ||
+            x < dsax || x >= dsax + rrw)
+            return serial();
+        const uint64_t avail = bpp ? size / bpp : uint64_t(size) * 2u;
+        const uint32_t n = static_cast<uint32_t>(std::min<uint64_t>(total - copied, avail));
+        if (n == 0u)
+            return serial();
+        const uint32_t x0 = x - dsax, c0 = copied, y0 = y;
+        const uint32_t lastRow = y0 + static_cast<uint32_t>((uint64_t(x0) + n - 1u) / rrw);
+        if (uint64_t(dbp / 32u) + (uint64_t(lastRow / ph) + 1u) * ppr + 1u > 512u)
+            return serial();
+        const uint32_t firstBand = y0 / ph, nb = lastRow / ph - firstBand + 1u;
+        if (nb < 2u)
+            return serial();
+        const uint32_t chunks = std::min(nb, (pool.workers() + 1u) * 2u);
+        auto bandStart = [&](uint32_t b) -> uint32_t // relative pixel index of the first pixel of band b
+        {
+            if (b <= firstBand)
+                return 0u;
+            const uint64_t s = (uint64_t(b) * ph - y0) * rrw - x0;
+            return static_cast<uint32_t>(std::min<uint64_t>(s, n));
+        };
+        std::vector<std::array<uint32_t, 512>> local(blocks ? chunks : 0u);
+        pool.Run(chunks, [&](uint32_t j)
+                 {
+                     uint32_t s = bandStart(firstBand + static_cast<uint32_t>(uint64_t(nb) * j / chunks));
+                     const uint32_t e = bandStart(firstBand + static_cast<uint32_t>(uint64_t(nb) * (j + 1u) / chunks));
+                     uint32_t *blk = nullptr;
+                     if (blocks)
+                     {
+                         local[j].fill(0u);
+                         blk = local[j].data();
+                     }
+                     auto at = [&](uint32_t k, uint32_t &lx, uint32_t &ly, uint32_t &lc)
+                     {
+                         const uint64_t a = uint64_t(x0) + k;
+                         ly = y0 + static_cast<uint32_t>(a / rrw);
+                         lx = dsax + static_cast<uint32_t>(a % rrw);
+                         lc = c0 + k;
+                     };
+                     uint32_t lx, ly, lc;
+                     if (bpp == 0u && (s & 1u) && s < e) // band starts on the high nibble of a source byte
+                     {
+                         const uint8_t hi = static_cast<uint8_t>(data[s >> 1] >> 4);
+                         at(s, lx, ly, lc);
+                         UploadPixels<M>(table, vram, dbp, dbw, dsax, rrw, lx, ly, lc, c0 + s + 1u, &hi, 1u, blk);
+                         ++s;
+                     }
+                     if (s >= e)
+                         return;
+                     at(s, lx, ly, lc);
+                     const uint32_t off = bpp ? s * bpp : s >> 1;
+                     const uint32_t len = bpp ? (e - s) * bpp : (e - s + 1u) >> 1;
+                     UploadPixels<M>(table, vram, dbp, dbw, dsax, rrw, lx, ly, lc, c0 + e, data + off, len, blk);
+                 });
+        if (blocks)
+            for (const auto &l : local)
+                for (uint32_t p = 0; p < 512u; ++p)
+                    blocks[p] |= l[p];
+        const uint64_t a = uint64_t(x0) + n;
+        y = y0 + static_cast<uint32_t>(a / rrw);
+        x = dsax + static_cast<uint32_t>(a % rrw);
+        copied = c0 + n;
     }
 }
 
@@ -1910,7 +2097,7 @@ void GSHwBackend::FastUploadLocked(const uint8_t *data, uint32_t sizeBytes, uint
     {
 #define PS2X_HW_UPLOAD(M, TABLE)                                                                                          \
     case static_cast<uint32_t>(GSMem::M):                                                                                 \
-        UploadPixels<GSMem::M>(GSMem::TABLE(), m_vram, u.dbp, u.dbw, u.dsax, u.rrw, u.x, u.y, u.copied, u.total, data, sizeBytes, blocks); \
+        UploadPixelsParallel<GSMem::M>(GSMem::TABLE(), m_vram, u.dbp, u.dbw, u.dsax, u.rrw, u.x, u.y, u.copied, u.total, data, sizeBytes, blocks); \
         break;
         PS2X_HW_UPLOAD(C32, GetPageTableC32)
         PS2X_HW_UPLOAD(C24, GetPageTableC32)

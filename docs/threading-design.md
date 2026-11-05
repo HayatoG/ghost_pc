@@ -496,6 +496,92 @@ Os pontos de sincronização desta seção (CSR uma vez por quadro sem espera; `
 confirmaram na prática: os `shot` do `regress_scene3d` saíram byte-idênticos (mesmo md5) entre `hw` e `hw-thread`.
 Ainda não feito: VU1 em thread própria (etapas 4+), e o oráculo `PS2X_GUEST_CLOCK_ONLY` + `PS2X_GS_STREAM_HASH` para o hw.
 
+## 10.7 Etapa 4: resultados (05/11 ~06:05): `PS2X_THREADS=vu`
+
+**Estado: implementado, correto pelo oráculo, mas 4-5x MAIS LENTO na cena 3D. Fica DESLIGADO (padrão off).** A causa da
+lentidão não foi achada até o prazo (abaixo).
+
+### 10.7.1 O que foi feito (desvio consciente do desenho de 3.2/3.3)
+
+Em vez de três anéis (R1 EE→VU, R2 EE→GS, R3 VU→GS com tickets), um anel só: o EE publica, em ordem de programa,
+**tudo** o que a VU1 e o árbitro do GIF fariam, e a thread VU1 executa na mesma ordem. Os PATH1 do XGKICK vão direto ao
+árbitro dentro da thread VU1. Como, com o modo ligado, o árbitro e o frontend do GS só são chamados pela thread VU1, a
+sequência submit/drain que o GS vê é a do modo serial **por construção** (os "tickets" ficam implícitos na ordem do anel).
+Preço: o frontend do GS (e, com `PS2X_GS=hw`/`cpu`, o backend) passa a rodar na thread VU1; com `hw-thread` o backend
+continua na thread própria dele.
+
+| Peça | Arquivo (em `work/ps2recomp_game/ps2xRuntime`) | O que faz |
+|---|---|---|
+| anel + thread | `include/ps2_vu_thread.h` (novo, só header: sem reconfigure do CMake; não incluído por headers do runner) | SPSC de bytes, itens de 32 B de cabeçalho + payload alinhado a 16, PAD na volta, posições atômicas, histerese a 50 % quando cheio, consumidor gira 4 000 `yield` e dorme em condvar (500 µs); acorda só quando o atraso passa de 64 KB ou o EE vai esperar. Itens: `GIF_SUBMIT{path,hl,bytes}`, `GIF_DRAIN`, `MPG{addr,bytes}`, `UNPACK{VifUnpack, VIFRegisters, rowOverride, bytes}`, `CALL{pc, top, itop, MSCNT, DE, TE}`. Contadores impressos a cada 50 vsyncs (`[vu-thread] vsync=…`) |
+| UNPACK/MPG | `src/lib/ps2_vif1_interpreter.cpp` | com o modo ativo, viram itens. O UNPACK leva o snapshot dos registradores do VIF1; o ROW é **autoritativo na thread VU1** (MODE 2/3 acumula lá); o EE manda o ROW dele só quando ele mudou por STROW/reset (`rowOverride`), e depois de cada espera copia o ROW da VU1 de volta (se o EE não o mudou nesse meio-tempo). O MPG faz o `memcpy` + `markVU1CodeModified` na thread VU1 (se o EE incrementasse a geração antes, o cache nativo podia recompilar código velho) |
+| árbitro | `src/lib/ps2_memory.cpp` | `m_gifArbiter->submit/drain` viram itens quando chamados pelo EE; `empty()` espera. A fila de PATH3 mascarado (MSKPATH3) continua no EE |
+| chamada | `src/lib/ps2_runtime.cpp` (callbacks MSCAL/MSCNT) | o 1º MSCAL liga a thread (`PS2X_THREADS` contém `vu` ou `all`). A chamada vira item; VPU_STAT D/T fica 0 na hora (é o que o serial publica quando o microcódigo não para por D/T; se parar, a thread VU1 escreve um AVISO e conta `dt_stops`: **0** em todas as corridas) |
+| esperas do EE (`waitIdle`) | `gs/gs_frontend.cpp` (18 métodos públicos), `ps2_memory.cpp` (registradores privilegiados do GS, memória da VU1 por MMIO, DMA SPR↔VU1, `empty()` do árbitro), `Kernel/EeScheduler.cpp` (VBlankStart) | o EE espera o anel esvaziar antes de tocar o GS ou a memória da VU1. Contagem medida: **só o VBlankStart espera** (~1 por quadro do jogo); GS, priv, memória da VU1, árbitro: 0 |
+| relógio | — | a chamada da VU1 não devolve ciclos ao escalonador (já era assim no serial), então o EE não precisa esperar nada para avançar o tempo: modelo de tempo igual ao serial |
+| interrupções | — | nada novo: o serial não entrega IRQ da VU1 (só os bits de VPU_STAT, tratados acima) |
+| limite de quadros | — | o `waitIdle` no VBlankStart deixa o EE no máximo ~1 vsync à frente (mais rígido que os 2 do desenho) |
+
+`PS2X_VU_THREAD_LOCKSTEP=1` espera cada item (mesma mecânica, sem concorrência). `PS2X_VU_THREAD_RING_MB` muda o anel (32).
+
+### 10.7.2 Prova de corretude
+
+Oráculo da seção 10 (`PS2X_GUEST_CLOCK_ONLY=1` + `PS2X_GS_STREAM_HASH`, `pad_scripts/determinism_scene3d.txt`), exe
+copiado em `work/vu_exe*`, logs em `logs/vuthread/` (`progress.log`, `hash_*.txt`, `run_*.log`):
+
+| Corrida | Renderizador | `PS2X_THREADS` | Linhas | md5 do arquivo de hashes |
+|---|---|---|---|---|
+| off1 / vu1 (build 1) | cpu | off / vu | 7 620 / 7 620 | `35004f17…` / `35004f17…` (= referência) |
+| vu4 (build consistente) | cpu | vu | 7 620 | `35004f17…` |
+| dg4, g5vu, g6vu, g8vu | hw / hw / hw / hw-thread | vu | 7 620 | `35004f17…` |
+| g5off, g6off, g8off | hw / hw / hw-thread | off | 7 620 | `35004f17…` |
+
+- Capturas `d07564`/`d07600` com `vu`: md5 `267f287b…`/`159bd2c4…`, iguais às de `off` e às da seção 10.2.
+- `regress.ps1 -Scenario menu` byte-idêntico (md5 `84891ae3`) com `PS2X_THREADS=vu` e sem (build final).
+- **Não feito**: o modo `vu-verify` (VU1 sombra síncrona comparando estado/PATH1 por chamada). O executor nativo só roda
+  quando `vuCode == memory->getVU1Code()`, então a sombra com memória própria cairia no interpretador e o XGKICK dela
+  precisaria de um GS falso que não suje o hash global; não coube no prazo. A prova fica sendo o oráculo (8 corridas
+  idênticas, 3 renderizadores) + menu.
+
+### 10.7.3 Desempenho medido (o problema)
+
+vsync/s do guest na cena 3D (vsync 7530→7615), só-guest, amostrando o número de linhas do arquivo de hashes a cada
+0,5 s (`samp_*.txt`); máquina com 2-4 outros runners de outros agentes, off e vu rodando lado a lado:
+
+| Par | off | vu |
+|---|---|---|
+| g5 (hw) | 32,4 | **5,9** |
+| g6 (hw, wake só por atraso) | 27,1 | **5,95** |
+| g8 (hw-thread) | 26,7 | **5,96** |
+
+Em tempo real (`PS2X_GS=hw`, `PS2X_PAD_CLOCK=guest`, janela 7530-7640, como `hwthread_measure.sh`): o CSV do
+`PS2X_FPS_LOG` mostra ~4 vsync/s com `vu` contra 15-26 com `off` (par `m4off`/`m4vu`, simultâneos, com carga). A conta
+pela janela 7530-7640 não fechou nesses CSVs (o processo sai antes de a integral chegar a 7640); o número absoluto
+pedido (vsync/s na janela com e sem `vu`, máquina livre) **não foi medido** de forma limpa.
+
+Diagnóstico até aqui:
+- Contadores (g6vu, vsync 7550→7600): 50 vsyncs, 400 mil itens, `waits_idle` 29 (só VBlankStart), tempo do EE em
+  `waitIdle` ~0 ms, em anel cheio 2 ms; thread VU1 ocupada ~1,2 s em ~14 s. Ou seja: **nem o EE espera a VU1, nem a
+  VU1 está ocupada**, e mesmo assim o EE anda ~5x mais devagar.
+- Amostrador da thread do jogo (`PS2X_PROFILE_*`, `prof_g7vu.txt`, 8 s na cena 3D): **91 % das amostras fora do exe**
+  (3 845 de 4 203), ou seja, a thread do jogo está parada no sistema (espera de kernel), não executando. Dentro do exe,
+  o custo do anel é pequeno (`push` 4,8 %, `beginPush` 0,8 % das amostras do módulo).
+- A taxa é a mesma (5,95 ± 0,01) em três configurações diferentes: cheira a uma espera quantizada por vsync (~168 ms),
+  não a falta de CPU. Descartados: notify por item (g6 tirou e nada mudou), backend D3D11 na thread VU1 (com
+  `hw-thread` igual), espera do EE no anel (medida ~0).
+- Lição de build (afeta todo mundo): o `rules.ninja` do `build_perf` tem `msvc_deps_prefix` com a acentuação
+  corrompida ("Observa��o: incluindo arquivo:"), então o ninja **não registra dependências de header**: mudar um `.h`
+  não recompila quem o inclui. Duas builds intermediárias desta etapa saíram com layouts diferentes da mesma struct
+  entre `.obj` (contadores sem sentido) até eu tocar os `.cpp`. Ao editar header: `touch` nos `.cpp` que o incluem.
+
+### 10.7.4 Pendências (próximos passos)
+
+1. Achar a espera de ~168 ms/vsync: pilha da thread do jogo durante a espera (WPR/ETW ou o amostrador gravando a pilha
+   em `ntdll`), e conferir `EeScheduler::waitForEvent`/`publishSnapshot` com o modo ativo (suspeita: algum caminho do
+   escalonador que só dorme quando a thread VU1 existe, ex.: espera por evento com prazo de host).
+2. Medir o vsync/s absoluto na janela 7530-7640 com a máquina livre (`MAQUINA.lock`), off contra vu.
+3. `vu-verify` (sombra) se a etapa voltar a ser candidata.
+4. Se o desenho de 1 anel for mantido, documentar que o GS fica na thread VU1 (com `hw-thread`, 3 threads: EE, VU1+frontend, backend).
+
 ## 11. Fontes consultadas
 
 - Código do runtime em `work/ps2recomp_game/ps2xRuntime` (base PS2Recomp, GPL-3.0), só leitura.
