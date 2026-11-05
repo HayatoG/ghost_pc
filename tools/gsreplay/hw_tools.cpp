@@ -4,6 +4,8 @@
 //                                                     buffer drawn since the previous check is compared (PSNR)
 //   gsreplay hwbench <rec> [scale] [reps]              HW replay timing (wall clock incl. GPU idle at the end)
 //   gsreplay hwstats <rec>                             render-target / texture-source statistics (no GPU)
+//   gsreplay hwuploadcheck <rec>                       fast host->local upload vs GSCpuBackend (byte compare)
+//   gsreplay hwdraws <rec> 0xFFFF                      draws with a bit-level FBMSK
 // Recordings and dumps contain game data: keep them in work/ (not versioned).
 #include "gsreplay.h"
 #include "runtime/gs/gs_hw_backend.h"
@@ -364,7 +366,19 @@ namespace
                 continue;
             const auto *b = reinterpret_cast<const GSPrimitiveBatch *>(recs[i].data.data());
             const GSContext &c = b->state.context;
-            if (c.frame.fbp != fbp)
+            // fbp 0xFFFF: every draw with a bit-level frame mask (FBMSK bytes other than 00/FF: CPU fallback)
+            if (fbp == 0xFFFFu)
+            {
+                bool partial = false;
+                for (int ch = 0; ch < 4; ++ch)
+                {
+                    const uint32_t m = (c.frame.fbmsk >> (8 * ch)) & 0xFFu;
+                    partial = partial || (m != 0u && m != 0xFFu);
+                }
+                if (!partial)
+                    continue;
+            }
+            else if (c.frame.fbp != fbp)
                 continue;
             char key[256];
             std::snprintf(key, sizeof(key), "%u %u %llx %llx %x %u %x %llx %u", b->state.prim.type, c.tex0.psm, (unsigned long long)c.test,
@@ -419,6 +433,57 @@ namespace
                     static_cast<unsigned long long>(presents), presents ? best / static_cast<double>(presents) : 0.0);
         std::printf("hw: %s\n", stats.c_str());
         return 0;
+    }
+
+    // Host->local uploads (and every other memory write except draws) through the reference CPU
+    // backend and through GSHwBackend's fast upload path (no GPU: transfers only), then compares the
+    // whole local memory byte by byte. Validates the inlined swizzle against GSCpuBackend::UploadImage.
+    int CmdUploadCheck(const char *path)
+    {
+        std::vector<uint8_t> vram0;
+        std::vector<Rec> recs;
+        if (!LoadRecordingRaw(path, vram0, recs))
+            return 2;
+        std::unique_ptr<GSRasterBackend> cpu(CreateBackendNew());
+        std::vector<uint8_t> cvram(kVramBytes, 0);
+        cpu->Initialize(cvram.data(), kVramBytes);
+        {
+            std::FILE *f = std::fopen(path, "rb");
+            RestoreBackendNew(cpu.get(), f);
+            std::fclose(f);
+        }
+        HwImpl hw;
+        if (!OpenHw(path, 1, hw))
+            return 2;
+        std::vector<uint8_t> scratch;
+        uint64_t uploads = 0;
+        double tCpu = 0, tHw = 0;
+        for (const Rec &r : recs)
+        {
+            if (r.type != 3 && r.type != 4)
+                continue;
+            const auto a = std::chrono::steady_clock::now();
+            Apply(*cpu, r, scratch);
+            const auto b = std::chrono::steady_clock::now();
+            Apply(*hw.backend, r, scratch);
+            const auto c = std::chrono::steady_clock::now();
+            if (r.type == 4)
+            {
+                ++uploads;
+                tCpu += std::chrono::duration<double, std::milli>(b - a).count();
+                tHw += std::chrono::duration<double, std::milli>(c - b).count();
+            }
+        }
+        size_t diff = 0, first = SIZE_MAX;
+        for (size_t i = 0; i < kVramBytes; ++i)
+            if (cvram[i] != hw.vram[i])
+            {
+                ++diff;
+                first = std::min(first, i);
+            }
+        std::printf("uploads=%llu reference=%.1f ms fast=%.1f ms bytes_different=%zu first=0x%zx\n",
+                    static_cast<unsigned long long>(uploads), tCpu, tHw, diff, diff ? first : 0);
+        return diff ? 1 : 0;
     }
 
     // Which texture reads hit memory that a previous draw rendered (by frame layout), and how.
@@ -498,6 +563,8 @@ int RunHwCommand(int argc, char **argv)
         return RunHwProfile(argv[2], argc > 3 ? std::atoi(argv[3]) : 1);
     if (cmd == "hwstats")
         return CmdStats(argv[2]);
+    if (cmd == "hwuploadcheck")
+        return CmdUploadCheck(argv[2]);
     return -1;
 }
 
@@ -507,7 +574,9 @@ int RunHwCommand(int argc, char **argv)
 #include <dbghelp.h>
 #include <atomic>
 #include <thread>
+#include <timeapi.h>
 #pragma comment(lib, "dbghelp.lib")
+#pragma comment(lib, "winmm.lib")
 
 int RunHwProfile(const char *path, uint32_t scale)
 {
@@ -524,6 +593,7 @@ int RunHwProfile(const char *path, uint32_t scale)
     DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &target, 0, FALSE, DUPLICATE_SAME_ACCESS);
     std::atomic<bool> running{true};
     std::vector<DWORD64> samples;
+    timeBeginPeriod(1); // 1 ms sampling instead of the default ~15 ms timer tick
     std::thread sampler([&]() {
         while (running.load())
         {

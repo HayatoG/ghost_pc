@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <xmmintrin.h>
 
 // Design, partition and hazard rules: ghost_pc/docs/gs-bands.md.
 
@@ -120,6 +121,10 @@ struct GSBandedBackend::WorkItem
     GSTexClutReg texclut;    // Clut
     uint8_t *vram = nullptr; // Initialize
     uint32_t vramSize = 0;
+    // Draw/DrawWhole: the dispatcher's MXCSR. The serial backend rasterizes on the caller's thread, and
+    // PATH1 draws arrive inside the VU1 run with round-toward-zero set (fesetround): the workers must use
+    // the same rounding/flush mode or float results (Z, colour, texture coordinates) differ in the last bit.
+    uint32_t csr = 0;
 };
 
 struct GSBandedBackend::Worker
@@ -216,6 +221,8 @@ void GSBandedBackend::WorkerMain(Worker &worker)
         }
         for (WorkItem &item : chunk)
         {
+            if ((item.type == ItemType::Draw || item.type == ItemType::DrawWhole) && _mm_getcsr() != item.csr)
+                _mm_setcsr(item.csr);
             try
             {
                 switch (item.type)
@@ -630,7 +637,12 @@ void GSBandedBackend::Submit(const GSPrimitiveBatch &batch)
     if (batch.vertexCount == 0u)
         return;
     if (m_shadow)
+    {
+        static const bool shadowFresh = std::getenv("PS2X_GS_BANDS_SHADOW_FRESH") != nullptr; // diagnostic
+        if (shadowFresh && batch.state.prim.tme)
+            m_shadow->TextureFlush();
         m_shadow->Submit(batch);
+    }
     const GSDrawState &state = batch.state;
     const GSContext &ctx = state.context;
 
@@ -782,6 +794,7 @@ void GSBandedBackend::Submit(const GSPrimitiveBatch &batch)
         PrepareForWorkerCommand();
         WorkItem item;
         item.type = ItemType::DrawWhole;
+        item.csr = _mm_getcsr();
         item.batch = batch;
         Push(*m_workers[0], std::move(item));
         if (m_shadow && m_config.verifyStrict && m_lastVsync >= StrictFromVsync())
@@ -816,6 +829,7 @@ void GSBandedBackend::Submit(const GSPrimitiveBatch &batch)
 
     WorkItem item;
     item.type = ItemType::Draw;
+    item.csr = _mm_getcsr();
     item.yMin = yMin;
     item.yMax = yMax;
     item.batch = batch;
@@ -1025,6 +1039,15 @@ void GSBandedBackend::VerifyAgainstShadow(const GSPrimitiveBatch *draw)
                   << " sc=(" << c.scissor.x0 << "," << c.scissor.y0 << ")-(" << c.scissor.x1 << "," << c.scissor.y1
                   << ") ofs=(" << c.xyoffset.ofx << "," << c.xyoffset.ofy << ") tbp0=" << c.tex0.tbp0 << " tpsm="
                   << int(c.tex0.psm) << " test=" << std::hex << c.test << " alpha=" << c.alpha << std::dec << std::endl;
+        TexelRect r{};
+        const bool known = draw->state.prim.tme && TexelBounds(*draw, r);
+        std::cerr << "[gs-bands]   tbw=" << int(c.tex0.tbw) << " tw=" << draw->state.textureWidth << " th="
+                  << draw->state.textureHeight << " clamp=0x" << std::hex << c.clamp << " tex1=0x" << c.tex1 << std::dec
+                  << " lin=" << draw->state.linearFilter << " stq0=" << draw->vertices[0].s << "," << draw->vertices[0].t << ","
+                  << draw->vertices[0].q << " stq1=" << draw->vertices[1].s << "," << draw->vertices[1].t << ","
+                  << draw->vertices[1].q << " stq2=" << draw->vertices[2].s << "," << draw->vertices[2].t << ","
+                  << draw->vertices[2].q << " rect=" << (known ? 1 : 0) << ":" << r.u0 << "-" << r.u1 << "," << r.v0 << "-"
+                  << r.v1 << " serialMode=" << m_serialMode << std::endl;
     }
     uint32_t first = 0, count = 0;
     for (uint32_t i = 0; i < m_vramSize; ++i)

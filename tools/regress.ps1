@@ -17,7 +17,7 @@ param(
     [string]$Ref,                       # padrao: work\reference_regress\<cenario>
     [string]$Out,                       # padrao: work\regress_out\<cenario>_<carimbo>
     [int]$TimeoutSec = 0,               # 0 = 120 (menu) ou 900 (scene3d)
-    [ValidateSet('cpu', 'd3d11')][string]$Renderer = 'cpu',
+    [ValidateSet('cpu', 'cpu-serial', 'cpu-thread', 'cpu-bands', 'd3d11', 'hw')][string]$Renderer = 'cpu',
     [ValidateSet('guest', 'host')][string]$PadClock = 'guest',
     [int]$MaxErr = 0,
     [int]$MaxDiffPx = 0,

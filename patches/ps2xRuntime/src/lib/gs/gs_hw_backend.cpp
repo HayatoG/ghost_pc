@@ -745,9 +745,9 @@ void GSHwBackend::UploadPagesLocked(const PageSet &pages)
     const PageSet todo = pages & m_cpuNewer;
     if (!todo.any())
         return;
-    // The pending batch may sample the old contents of these pages: draw it first.
+    // The pending batch may sample the old contents of these pages: draw it first (the update is
+    // ordered after it; no need to end the pass, see gs_rhi_hw.h).
     FlushBatchLocked();
-    EndPassLocked();
     todo.forEachRun([&](uint32_t first, uint32_t count)
                     { m_device->UpdateBuffer(*m_vramBuffer, first * kPageBytes, m_vram + first * kPageBytes, count * kPageBytes); });
     uint32_t n = 0;
@@ -1070,7 +1070,8 @@ uint32_t GSHwBackend::ClutSlotLocked()
         FlushBatchLocked(); // the ring wraps: nothing pending may still use an old slot
         m_clutCursor = 0;
     }
-    EndPassLocked();
+    // No EndPass: UpdateBuffer is legal inside a pass (gs_rhi_hw.h); a fresh slot is not read by
+    // anything already submitted. Ending the pass here cost one BeginPass per CLUT change.
     m_clutSlot = m_clutCursor++;
     m_device->UpdateBuffer(*m_clutBuffer, m_clutSlot * kClutSlotWords * 4u, m_clut.data(), kClutSlotWords * 4u);
     m_clutChanged = false;
@@ -2012,7 +2013,6 @@ void GSHwBackend::UploadImage(const uint8_t *data, uint32_t sizeBytes)
         m_patchBlocks.fill(0u);
         FastUploadLocked(data, sizeBytes, m_patchBlocks.data());
         FlushBatchLocked(); // the pending batch may sample the old contents
-        EndPassLocked();
         patch.forEach([&](uint32_t p)
                       {
                           uint32_t m = m_patchBlocks[p];

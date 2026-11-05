@@ -43,6 +43,7 @@ Movimentos (todos sob demanda):
 | textura com outro layout (T8 lendo um alvo CT32 etc.) | write-back do alvo na cópia GPU (compute, só as páginas sujas) e leitura pela cópia GPU com o swizzle do GSMem |
 | CPU lê (local→host, CLUT de memória renderizada, fallback, `ReadVram`, `SnapshotVram`) | write-back + readback só das páginas necessárias (único stall de CPU) |
 | CPU escreve (upload host→local, `ClearFramebuffer`, fallback) | páginas inteiras: o dono só perde a página; parciais: readback antes; depois `m_cpuNewer` e os alvos ficam `stale` |
+| upload host→local em página **parcial e mais nova na GPU** (05/11) | sem readback: o dono faz write-back na GPU, os pixels caem em `m_vram` e só os blocos de 256 B escritos sobem para a cópia GPU (`patch_uploads`); a página continua "GPU mais nova" e `m_cpuValid[página]` marca os blocos em que a CPU está correta (o `LoadClut` usa isso para não fazer readback) |
 
 Por que este modelo e não "alvo = verdade única" do PCSX2: este jogo lê o buffer principal CT32 como **T8 com largura 20**
 (~9 mil sprites de pós-processo por quadro, ciclo 0x180↔0xA0) e faz *texture shuffle* em CT16 com FBMSK de bits. O PCSX2
@@ -57,7 +58,11 @@ reinterpretação de forma geral, com um write-back por troca de dono, sem readb
 - **Sprites em tiras** (`x1 = x0 + 63,5`): como as bordas viram inteiros de 1x antes da escala, a tira cobre exatamente os
   mesmos pixels de 1x em qualquer `scale` (sem fendas).
 - **Estado por lote**: (alvo, Z, fonte de textura, pipeline, pipeline do 2º passe, scissor, FIX, constantes). Primitivas
-  consecutivas com a mesma chave viram um `Draw` (anel de vértices `MAP_NO_OVERWRITE`).
+  consecutivas com a mesma chave viram um `Draw` (anel de vértices `MAP_NO_OVERWRITE`). Desde a otimização de 05/11 (seção
+  5.3) o estado de textura/TFX/TEXA/teste de alfa/flags vai **por primitiva no vértice** (`HwVertex::st`, 4 palavras
+  empacotadas; o shader reconstrói `gTex0/gTex1/gMisc`), então troca de textura (TBW/PSM/tamanho/clamp) não quebra mais o lote;
+  as constantes do lote ficam só com o que é por alvo/fonte/pipeline (xform, FIX/blend, cor do fog, `src`, passe do AFAIL).
+- **Linhas e pontos** viram quads de 1 pixel sobre os mesmos pixels inteiros do Bresenham da CPU (sem textura, como a CPU).
 - **Blend**: `(A-B)*C>>7 + D` vira `Cs*fs + Cd*fd`. O shader pré-multiplica o termo de Cs (com As ou FIX) e o blender faz o
   termo de Cd com `SRC1_ALPHA` (dual source = As/128), `BLEND_FACTOR` (FIX/128) ou `DEST_ALPHA`; sinais negativos viram
   `SUBTRACT`/`REV_SUBTRACT`. `Cs*Ad` (0x58, comum neste jogo) usa `DEST_ALPHA` como fator de origem e o shader escala Cs por
@@ -65,7 +70,10 @@ reinterpretação de forma geral, com um write-back por troca de dono, sem readb
 - **Alpha test**: `KEEP` = `discard`; `FB_ONLY`/`ZB_ONLY`/`RGB_ONLY` = dois passes no mesmo lote (aprovados com tudo;
   reprovados com máscara de cor/Z do AFAIL), como no PCSX2. `ATST=NEVER` vira só o ramo de falha.
 - **Z**: D32F com `z·2⁻²⁴` (exato para Z16/Z24; Z32 com `2⁻³²`, com perda acima de 2²⁴); `ZTST` → `GREATER_EQUAL`/`GREATER`.
-- **FBMSK** por byte vira máscara de canal; máscara de bits (shuffle CT16 com `0x7FFF`) vai para a CPU (80 draws/quadro).
+- **FBMSK** por byte vira máscara de canal; máscara de bits (shuffle CT16 com `0x7FFF`, ~27 sprites/present) **sem blend**
+  é feita no shader: cópia do alvo na caixa da primitiva (superfície de feedback), lida em `SV_Position`, e
+  `(src & ~m) | (dst & m)` (flag `F_DSTMASK`, máscara em `gSrc.y`). Com blend, ou com a textura vindo de outro alvo (t0
+  ocupado), continua na CPU (contado em `cpu_why bitmask`).
 - Não emulados ainda (contados): DATE, PABE, COLCLAMP=0 (wrap), dither.
 
 ### 2.3 Resolução interna escalável
@@ -112,7 +120,12 @@ Harness headless (`tools/gsreplay`, `build.cmd ... hwonly`), gravações `work/g
 
 Outras ferramentas do harness: `hwfirst <rec> <scale> <passo> <tol> <bytes> [início]` para no primeiro registro que piora as
 páginas do próprio alvo (imprime a primitiva e os pixels); `hwdraws <rec> <fbp>` lista estados distintos que desenham num alvo;
-`hwstats` mostra de onde vêm as texturas (alvo × memória); `hwprofile` amostra a thread do replay.
+`hwstats` mostra de onde vêm as texturas (alvo × memória); `hwprofile` amostra a thread do replay (amostragem de 1 ms com
+`timeBeginPeriod`; antes era ~15 ms e dava poucas amostras); `hwuploadcheck <rec>` passa só as transferências pelo
+`GSCpuBackend` e pelo upload rápido do `GSHwBackend` e compara a memória local byte a byte; `hwdraws <rec> 0xFFFF` lista os
+draws com FBMSK de bits. A linha de estatísticas ganhou `cpu_why=(prim fpsm zpsm tpsm bitmask)`, `upload_mb`,
+`patch_uploads`, `clut_no_readback`, `clut_loads`, `clut_skipped`. `PS2X_GS_HW_SLOWUPLOAD=1` volta ao upload do
+`GSCpuBackend` (o upload rápido também se desliga sozinho com `PS2X_GS_RECORD`, porque o gravador mora no backend de referência).
 
 No jogo: `tools/regress.ps1`-like com `PS2X_GS=hw PS2X_GS_HW_CPUFRAME=1` (o `shot` sai do quadro composto na CPU depois de
 sincronizar tudo) e `../tools/image_regress.py logs/final/shots_baseline_cpu <shots> --min-psnr 30`.
@@ -161,7 +174,74 @@ Leitura: com o GS por hardware a cena 3D sobe para ~12 vsync/s e a escala 4× cu
 quadro agora é limitado pela thread do jogo (VU1/EE/IOP), como já indicava o `cpu-thread` (~12 Hz). Para 50 Hz o próximo passo
 é o VU1 (outro agente) e tirar o GS da thread do jogo (preparo de primitivas numa thread própria, com a fila do `cpu-thread`).
 
+### 5.3 Otimização do custo de CPU/driver (05/11, 02:10–03:40)
+
+Ponto de partida: o perfil medido no jogo (`gameplay-profile-hw-2026-11-05.md`): espelho CPU do GS 14 % da thread do jogo
+(`UploadImage`/`WriteP8`/`DrawSpriteTextured`), readbacks ~8 ms/quadro, ~1 000 draws e ~720 quebras de lote por quadro. O
+replay (`hwbench`/`hwprofile`, headless, inclui esperar a GPU no fim) reproduz isso: no `scene3d_7501` (64 presents) o tempo
+ia para submits 630 ms (com 11 % em `DrawSpriteTextured` de fallback), uploads 335 ms, `LoadClut` 152 ms e 22 % das amostras
+em `NtWaitForSingleObject` (219 readbacks). Logs: `logs/hwopt/` (fora do git).
+
+Passos, em ordem, com o `hwbench scene3d_7501 1 N` (melhor de N; ms por present gravado):
+
+| # | Mudança | ms/present | O que mudou nos contadores |
+|---|---|---|---|
+| 0 | base (exe de 01:36) | **17,60** | api_draws 41 529, flush_key 28 488 (tex 14 384, pso 10 602, alvo 3 324), cpu_prims 3 460, readbacks 219 (226 ms) |
+| 1 | upload host→local direto em `m_vram` (traits do GSMem inline, sem chamada virtual/divisão/lock por pixel) + fallback com páginas da caixa da primitiva | 12,73 | uploads 335 → 195 ms |
+| 2 | linhas/pontos na GPU | 13,43 (ruído) | as 2 700 linhas da gravação estavam fora do scissor (agora `tri_out`), ganho nulo aqui |
+| 3 | FBMSK de bits sem blend na GPU (cópia do alvo + merge no shader) | 12,70 | cpu_prims 0; `DrawSpriteTextured` some do perfil; mas surgem 361 readbacks de 1 página (uploads parciais em páginas GPU) |
+| 4 | upload parcial em página GPU sem readback (patch de blocos de 256 B) | 11,90 | readbacks 361 → 181 (sobravam no `LoadClut`) |
+| 5 | `LoadClut` sem readback quando os blocos da CLUT vieram de um patch (`m_cpuValid`) | 10,72 | readbacks 181 → **18**, readback 226 → 47 ms |
+| 6 | estado de textura/TFX/alfa por primitiva no vértice | 11,3 (ruído*) | api_draws 41 529 → **25 556**, flush_key 28 488 → 14 158 (tex 0), vtx 135 → 241 MB |
+| 7 | filtros de estado redundante na RHI (SRVs, constantes, scissor) + leituras da CLUT inline | 11,7 (ruído*) | — |
+| 8 | estado empacotado (vértice 64 → 52 B) | 11,27* | vtx 241 → 195 MB |
+| 9 | `LoadClut` idêntico ao anterior, de páginas não escritas desde então (versão por página), é pulado | 9,12 | 78 % das cargas de CLUT puladas (39 722 de 50 871) |
+| 10 | upload com linha da tabela de swizzle em cache e store direto | **6,69** | uploads 195 → ~100 ms; `hwuploadcheck`: memória **byte-idêntica** à do `GSCpuBackend::UploadImage` nas 3 gravações |
+| 11 | `UpdateBuffer` (slot de CLUT, páginas, patch) sem encerrar o passe | 8,4–9,1* | passes 19 764 → 11 399 |
+
+(*) medidos com `ps2EntryRunner` de outro agente rodando ao mesmo tempo (o replay varia ±30 % com essa carga); o ganho do
+6 aparece no `scene3d_7628_new` (3 presents): 123,8 → 88,9 ms; no fim (passo 11) **60,3 ms** (2,05×).
+
+Total no replay: **17,60 → 6,7–9,1 ms/present (2–2,6×, conforme a carga da máquina)**; readbacks 219 → 18; draws −38 %;
+passes −52 %; fallback CPU 3 460 → 0.
+Qualidade (`hwcompare`, último present; igual ao de antes nas casas mostradas): `scene3d_7570` display 37,02 dB / buffer
+principal 36,17 dB; `scene3d_7628_new` 35,80 / 35,17 dB. (A visão CT16 de 0xA0 — os mesmos bytes lidos como 16 bits, o
+alvo do shuffle — dá 18,8 dB tanto antes como depois: amplifica as mesmas diferenças de ±1–3 dos canais.)
+
+No jogo (cena 3D, janela de vsync 7530→7640, mesma métrica da 5.2, `PS2X_GS_WINDOW=0`, `PS2X_GS_HW_CPUFRAME=0`,
+`PS2X_TARGET_FPS=0`; exe `work/hw_exe_opt` de 05/11 02:31; script `hwopt_measure.sh` no scratchpad da sessão):
+
+| Exe | vsync/s | Observação |
+|---|---|---|
+| base `work/hw_exe4` (01:36) | **12,22** | 02:35; um `ps2EntryRunner` de outro agente rodando junto (bate com os 12,2 da 5.2) |
+| `work/hw_exe_opt` (passos 1–10, 02:31) | **17,25** (+41 %) | 02:32; outro `ps2EntryRunner` entrou aos 30 s |
+| `work/hw_exe_opt2` (passos 1–11, 02:42) | **18,76** (+54 %) | 02:42; sem outro jogo rodando no início |
+
+Contadores no jogo, intervalo de presents 7200→7500 (o mesmo do perfil; quase todo gameplay): antes / depois (exe opt2):
+api_draws +148 667 / **+36 811**; flush_key +104 545 / +20 234; `gpu_readback_ms` **+1 193 ms / +0 ms** (zero readbacks no
+gameplay); cpu_prims +2 895 / **0**; passes +16 458 no intervalo (antes: ~1 por draw nas cenas de CLUT trocada a cada sprite).
+
+Regressão (`PS2X_GS_HW_CPUFRAME=1`, exe opt; `shot` contra `logs/final/shots_baseline_cpu`, `image_regress.py --min-psnr 30`,
+log `logs/hwopt/regress_opt_*`): q07300 71,70 dB; q07500 73,56; q07564 40,79; q07628 36,98; q07692 36,48; q07700 36,92 —
+todos > 30 dB (antes: 71,7 / 73,6 / 40,8 / 37,0 / 37,0 / 36,9; q07692 −0,5 dB, dentro da tolerância). Com `CPUFRAME=1` a
+janela deu 17,72 vsync/s. (O `image_regress` acusa "FALHA" porque os limiares de erro absoluto ficam em 0 por padrão; o
+critério combinado é o PSNR.)
+
+O que **não** foi feito (decisão, com o porquê):
+- Swizzle de upload em compute shader: o upload na CPU ficou ~2,4× mais rápido e exato, e manter `m_vram` correto evita
+  readbacks no `LoadClut`/fallback. Mover para a GPU exigiria CLUT na GPU (a CLUT do fallback de referência mora na CPU).
+- Array de texturas / atlas: as quebras por textura eram de *parâmetros* (TBW/PSM/tamanho/clamp), não de recurso — a textura
+  vem da cópia GPU da memória local (um buffer só). Levar os parâmetros ao vértice zerou essas quebras sem atlas.
+- Contexto diferido / thread de submissão: com 18 readbacks e −38 % de draws o driver deixou de dominar o replay; o perfil
+  restante é submit (setup de primitiva) e upload. Fica para depois de medir o jogo de novo.
+- Laço da janela com `PS2X_TARGET_FPS=0` (gira a ~5 100 quadros/s): o laço é do `ps2_runtime.cpp` (fora dos arquivos deste
+  backend). Com o padrão (`PS2X_TARGET_FPS` ausente = 60) ele já dorme; nas medições de benchmark ele continua roubando ~60 %
+  de um núcleo. Pendência registrada na seção 8.
+
 ## 6. O que foi estudado do PCSX2 (regra 8)
+
+Rodada de otimização (5.3): nenhuma consulta à rede; as ideias (estado por primitiva para não quebrar lotes, FBMSK de bits
+com cópia do alvo, evitar readback) são as do desenho conhecido do `GSRendererHW`/`GSTextureCache`, sem código copiado.
 
 PCSX2 (GPL-3.0, mesma licença do PS2Recomp). Estudo **de memória** (conhecimento prévio do desenho de `pcsx2/GS/Renderers/HW`:
 `GSRendererHW`, `GSTextureCache` com fontes/alvos por (TBP, TBW, PSM), `GSDevice11` e `tfx.fx`/`tfx.hlsl`), sem acesso à rede
@@ -187,11 +267,16 @@ memória local na GPU (write-back por compute), herdada do backend ROV.
 
 1. **Glow do holofote** (feedback dentro do mesmo sprite, ver 5.1): decidir a semântica (GS real) e, se for a da CPU, desenhar os
    sprites auto-referentes em tiras/colunas com cópia entre elas.
-2. Quebras de lote restantes (por troca de pipeline e de formato/tamanho de textura): mover TBW/PSM/tamanho para o vértice e
-   ordenar as variantes de pipeline; o custo por quadro hoje é dominado pela thread do jogo (VU1), não pelo GS.
-3. FBMSK de bits (shuffle CT16, 80 draws/quadro) e DATE/PABE ainda na CPU ou ignorados: implementar com cópia do alvo
-   (shader blending) como no PCSX2.
-4. Composição PMODE com dois circuitos na GPU (hoje: um circuito direto; com `PS2X_GS_HW_CPUFRAME` o host recebe o quadro da CPU).
-5. Back-ends D3D12/Vulkan da `gs_rhi_hw.h` (seção 3) e substituição de texturas por hash (o caminho de textura passa por um ponto
+2. Quebras de lote restantes: por pipeline (~10,6 mil em 64 presents: blend/Z/máscara mudam entre primitivas vizinhas) e por
+   alvo (3,3 mil). Opções: blend no shader com cópia do alvo só quando barato, ou ordenar variantes respeitando a ordem de
+   pintura (exige provar que não há sobreposição). Por textura: resolvido (5.3).
+3. FBMSK de bits **com blend** e com textura vinda de outro alvo, DATE e PABE: ainda CPU/ignorados (FBMSK sem blend: GPU, 5.3).
+4. Laço da janela (`ps2_runtime.cpp`) com `PS2X_TARGET_FPS=0`: reapresentar só quando houver quadro novo (esperar evento) sem
+   mudar o ritmo do guest nem o relógio do pad; não é arquivo deste backend.
+5. Upload: ainda ~1,9 ns/byte na CPU (P8 domina). Próximo degrau: swizzle por bloco de 256 B (cópia de colunas, como o
+   GSLocalMemory do PCSX2) ou upload linear + compute com CLUT na GPU.
+6. `Present` da janela e contenção do `m_mutex` (recursivo) com a thread da janela: não medido nesta rodada.
+7. Composição PMODE com dois circuitos na GPU (hoje: um circuito direto; com `PS2X_GS_HW_CPUFRAME` o host recebe o quadro da CPU).
+8. Back-ends D3D12/Vulkan da `gs_rhi_hw.h` (seção 3) e substituição de texturas por hash (o caminho de textura passa por um ponto
    único — `FetchTexel`/página da cópia GPU — onde um cache por conteúdo pode ser inserido).
-6. Rodar `explore2` e as outras regressões com `PS2X_GS=hw` antes de torná-lo padrão.
+9. Rodar `explore2` e as outras regressões com `PS2X_GS=hw` antes de torná-lo padrão.

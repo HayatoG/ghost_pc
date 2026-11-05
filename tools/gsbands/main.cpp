@@ -136,7 +136,7 @@ namespace
         }
         case GSCpuBackend::kRecPresent:
             if (t.banded)
-                t.banded->Drain(); // the runtime's Present is a barrier too
+                t.backend->SnapshotVram(t.scratch); // the runtime's Present is a full barrier too
             break;
         case GSCpuBackend::kRecReset:
             b.Reset();

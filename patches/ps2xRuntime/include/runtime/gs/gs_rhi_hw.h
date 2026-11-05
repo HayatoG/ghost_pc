@@ -13,7 +13,10 @@
 //    Render-target formats are fixed by the desc (colour RGBA8 and/or depth D32F).
 //  - BeginPass/EndPass = render pass / dynamic rendering. Inside a pass only draw-state calls are
 //    legal (SetPipeline, SetConstants, SetTextures, SetBlendConstant, SetScissor, Draw).
-//    Copies, dispatches, readbacks and uploads happen outside passes.
+//    Copies, dispatches and readbacks happen outside passes. UpdateBuffer (small uploads: CLUT slots,
+//    pages of local memory) is also legal inside a pass and is ordered after the draws recorded before
+//    it (D3D11: UpdateSubresource; D3D12/Vulkan: stage into an upload ring and copy before the pass,
+//    or split the pass).
 //  - Resource state transitions are implicit: the implementation tracks the last use of every
 //    Surface/Buffer (render target, depth, sampled, storage, copy) and inserts barriers when a
 //    pass/dispatch/copy needs another state. D3D11 does this itself.
