@@ -40,6 +40,10 @@ python -I launcher/ps2launcher.py run     --game ghost_pc   # verify + extract +
 
 Logs em `logs/launcher_<data>.log` e `logs/run_<data>.log`. Preencher `[run]` quando o runtime estiver construído.
 
+### Launcher em Rust e opcoes de execucao
+
+`launcher-rs/` (`ps2launch` CLI, `ps2launch-gui`) le `launcher.cfg` e exporta variaveis `PS2X_*` ao runtime. Precedencia: **linha de comando > ambiente do processo > `launcher.cfg` > `game.toml`**. Opcoes (detalhes em `launcher-rs/README.md`): `--renderer cpu|cpu-thread|d3d11|hw` (`PS2X_GS`), `--internal-scale 1..8` (`PS2X_GS_SCALE`), `--crt [off|suave|medio|forte]` (`PS2X_POSTFX_CRT`/`_STRENGTH`), `--vfs-cache-mb N` (`PS2X_VFS_CACHE_MB`, 0 desliga, ausente = automatico), `--widescreen` (`PS2X_WIDESCREEN`, planejado, sem efeito), `--vsync`, `--fps`. O launcher registra RAM/VRAM no log e avisa (sem bloquear) em escala > 2 ou cache grande com pouca memoria.
+
 ## Como rodar as ferramentas da raiz
 
 Rode **a partir de `ghost_pc/`** para que `work/` e `logs/` sejam relativos ao jogo:
