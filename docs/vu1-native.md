@@ -39,8 +39,9 @@ transferência. A recuperação sob demanda é exata e barata.
 ## Como funciona
 
 - **Tradução por par**, preguiçosa, com cache por instância (2048 pares, ~300 KB no heap, ponteiro em
-  `m_extension`). A validade segue a geração do código (`markVU1CodeModified`). Quando a geração muda, cada
-  par é revalidado comparando as 2 palavras: um upload parcial não descarta as traduções que não mudaram.
+  `m_extension`). A validade segue a geração do código (`markVU1CodeModified`). Desde 05/11 05:35, quando a
+  geração muda, cada bloco de 512 bytes é comparado uma vez com uma cópia-sombra no primeiro uso, e só os pares de
+  blocos alterados são retraduzidos (ver "Rodada de 05/11 (05:27–06:25)"): um MPG com bytes iguais não invalida nada.
 - Cada `NPair` guarda o `DecodedInstructionPair` do interpretador (leituras com stall e latências, a mesma
   fonte de verdade) mais o tipo de handler e os operandos já extraídos.
 - **Upper**: ADD/SUB/MUL/MADD/MSUB (bc, q, i, vetor, para VF e ACC), MAX/MINI (comparação de bits crus),
@@ -144,6 +145,67 @@ Leitura: os micro-programas do jogo são curtos (~245 ciclos). Isso muda a prior
 
 Próximo passo concreto: instrumentar no harness o tempo de `fetch` com geração nova contra geração igual
 (rodar `rec_gameplay` com a geração congelada) para medir o item 1 antes de implementá-lo.
+
+## Rodada de 05/11 (05:27–06:25): o suspeito da revalidação foi medido e NÃO é o gargalo
+
+Objetivo: custo por chamada abaixo da metade (~6,1 µs → <3 µs). **Não alcançado.** O que foi feito, na ordem:
+
+**1. Medida do suspeito (harness).** A gravação só guarda o código quando os bytes mudam (`VuCallRecorder`), mas o
+jogo faz MPG ~340 vezes por quadro, quase sempre com bytes iguais, e cada MPG incrementa a geração global. O harness
+ganhou `PS2X_REPLAY_MPG_EVERY=N` (e `PS2X_REPLAY_MPG_BYTES`, padrão 512): antes de cada N-ésima chamada simula um MPG que
+regrava os mesmos bytes num endereço rotativo e incrementa a geração, como o VIF faz (`writeVuCode` no
+`fake/runtime/ps2_memory.h`). Também imprime `us/call`. Com `N=1` (pior caso: geração nova em **toda** chamada) contra
+`N=0`, `rec_gameplay`, 30 passadas, 4 pares intercalados: **+0,06 a +0,45 µs por chamada (média ~0,28 µs, ~4 %)**.
+Contagem (build com `PS2X_VU1_NATIVE_STATS`): **216 pares por chamada**, ~30 ns por par, 6 675 traduções em 6 000
+chamadas (as recargas idênticas já não retraduziam nada). Na gravação real há 126 trocas de código de verdade em 3 vsyncs
+(~2,4 blocos de 512 bytes cada); as outras recargas do jogo são idênticas.
+
+Perfil do harness (antes; amostrador, 150 passadas): `run` 30 %, `execLower` 12 %, `finishFmac` 10,5 %, `syncSlow`
+7,5 %, `upperFmac` 7,5 %, `markWrites` 7,4 %, `execUpper` 6 %, `resetScheduler` 1,6 %, `translate` 0,65 %. Ou seja:
+**o custo está no laço por par (216 pares × ~30 ns), não na revalidação nem no setup.** A estimativa anterior
+("~1 µs dos 6,1") estava errada por um fator de ~4 no pior caso; no jogo (geração nova em ~1 de cada 6 chamadas, se
+340 MPGs/quadro e 2 000 chamadas/vsync) a revalidação custava algo como 0,05 µs por chamada.
+
+**2. Geração por bloco (feito, só em `ps2_vu1_native.cpp`).** Não foi preciso mexer em `PS2Memory` nem no VIF (que é
+de outro agente): o cache guarda uma **cópia-sombra** da memória de código. Quando a geração muda, cada bloco de 512
+bytes é comparado com a sombra **uma vez, no primeiro uso** (`checkBlock`); só um bloco cujos bytes mudaram ganha época
+nova. Um par continua válido enquanto o carimbo dele bate com a época do bloco (e do bloco seguinte, para os 4 últimos
+pares do bloco, cujo lookahead da eliminação de flags entra nele). O caminho rápido do `fetch` é o mesmo de antes (um
+carimbo por geração); a revalidação saiu do laço (`revalidate`, fora de linha). Um MPG com bytes idênticos, portanto,
+não invalida nada. Resultado no pior caso (`N=1`): `revalidate` 2 % do perfil; entre `N=0` e `N=1` a diferença ficou
+dentro do ruído (mediana 6,77 contra 6,78 µs). O cache por hash de conteúdo entre uploads não foi feito: as recargas
+são idênticas (já cobertas pela sombra) e as trocas reais retraduzem só ~2,4 blocos.
+
+**3. Setup por chamada e commit de flags.** Tentativa: trocar `fegetround`/`fesetround` por `_mm_getcsr`/`_mm_setcsr`.
+Um primeiro A/B (3 pares) sugeriu −1,5 %, mas com ordem rotativa e 9 rodadas por variante a versão MXCSR ficou **~5 %
+mais lenta** (mediana 8,96 contra 7,84 µs, mesma carga): o MSVC parece otimizar pior o laço inteiro do `run` em volta
+desses intrínsecos. **Revertido** (fica o `fesetround`, com comentário). Feito e mantido: caminho rápido no `syncTo`
+quando só há entradas de MAC/status/clip pendentes (sem FDIV, EFU nem sobras do interpretador): commita as entradas
+prontas do FIFO em ordem, sem a chamada fora de linha `syncSlow` nem o salvar/restaurar `m_cycle` (equivalente: nesse
+caso cada commit por ciclo só mexe nas flags, na ordem do FIFO). `resetScheduler` (1,6 %) e as cópias de estado
+ficaram: zerar só as filas usadas exigiria provar que o interpretador nunca lê entradas com máscara zerada.
+
+**Números (harness, `rec_gameplay`, `N=0`, máquina muito carregada por builds e jogos de outros agentes; prioridade
+alta, núcleo fixo, ordem rotativa, 9 rodadas):** original 7,17 / 7,52 µs (mín./mediana), final (bloco + `syncTo` +
+`fesetround`) 7,33 / 7,84 µs. **Sem ganho mensurável; a diferença (±4 %) está dentro do ruído de layout de código e
+da carga**, que variou ±30 % entre rodadas. ns/ciclo: 25–36 conforme a carga.
+
+**Validação.** Replay contra o interpretador original congelado (`ref/`): os 10 conjuntos (`rec_gameplay`, `rec_7563`,
+`synth`, `synth2`–`4`, `big21`, `big22`, `synth_n1`, `synth_n2`) **idênticos** em estado, memória de dados e pacotes
+GIF, cada um com `PS2X_REPLAY_MPG_EVERY` = 0, 1 e 3 (30 rodadas). As trocas reais de código parciais (126 em
+`rec_gameplay`, 2 000 em `synth_n1`, 600 em `big21`, comparando bloco a bloco) exercitam a invalidação de bloco
+alterado; os MPGs simulados exercitam o caso de bytes iguais. Jogo, exe final de 05:46:10 (`work/vu1_bench/exe_blk2`,
+que também contém o que outros agentes tinham no disco; a variante MXCSR de 05:37, `exe_blk`, passou nos mesmos testes):
+regress **menu idêntico** (md5 `84891ae3`), **scene3d 6/6 idênticos**, oráculo de determinismo
+(`PS2X_GUEST_CLOCK_ONLY=1` + `PS2X_GS_STREAM_HASH`, `determinism_scene3d.txt`) **idêntico: md5 `35004f17…`, 7 620
+linhas**. vsync/s na janela 7530–7640 (`PS2X_GS=hw`, `hwthread_measure.sh`, com outros 6 processos do jogo rodando
+na máquina): **22,98** (a variante MXCSR, com 4 outros: 19,16). Não serve como A/B: a carga dominou. O amostrador no
+jogo não foi rodado de novo nesta rodada (sem tempo; o harness já mostrou que a revalidação não pesa).
+
+**Conclusão para o próximo passo.** Para cortar o custo pela metade é preciso atacar os ~30 ns por par: o estágio 2b
+de verdade (blocos até o branch/E-bit com stalls resolvidos na tradução e o `syncSlow`/`markWrites` por bloco, flags
+calculadas só onde são observadas) ou um emissor x86-64. Com 216 pares por chamada e o código quase sempre idêntico,
+um cache de blocos traduzidos chaveado pelo conteúdo (agora barato de validar pela sombra) é o caminho.
 
 ## O que estudei do microVU (PCSX2, GPL-3.0+), regra 8
 

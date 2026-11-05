@@ -134,6 +134,18 @@ int main(int argc, char **argv)
         profiler.start(self, 0.0, 3600.0, argv[4]);
     }
 
+    // PS2X_REPLAY_MPG_EVERY=N: before every Nth call, simulate a VIF MPG that rewrites the code memory with the
+    // bytes it already holds (the game reloads the same microcode ~340 times per frame; the recording only keeps
+    // uploads that changed bytes). PS2X_REPLAY_MPG_BYTES=B (default 512) is the size of that upload, placed at a
+    // rotating 8-byte aligned address. Results must not change; only the cache revalidation cost does.
+    uint32_t mpgEvery = 0;
+    uint32_t mpgBytes = 512;
+    if (const char *text = std::getenv("PS2X_REPLAY_MPG_EVERY"))
+        mpgEvery = static_cast<uint32_t>(std::strtoul(text, nullptr, 10));
+    if (const char *text = std::getenv("PS2X_REPLAY_MPG_BYTES"))
+        mpgBytes = std::max<uint32_t>(8u, static_cast<uint32_t>(std::strtoul(text, nullptr, 10)) & ~7u);
+    uint64_t simulatedMpgs = 0;
+
     double seconds = 0.0;
     uint64_t totalCycles = 0;
     for (int pass = 0; pass < repeat; ++pass)
@@ -166,6 +178,16 @@ int main(int argc, char **argv)
             }
             if (code[u].empty())
                 continue;
+            if (mpgEvery != 0u && index % mpgEvery == 0u)
+            {
+                std::vector<uint8_t> &c = code[u];
+                const uint32_t size = static_cast<uint32_t>(c.size());
+                const uint32_t bytes = std::min(mpgBytes, size);
+                const uint32_t dest = static_cast<uint32_t>((index * 520u) % (size - bytes + 8u)) & ~7u;
+                std::vector<uint8_t> copy(c.begin() + dest, c.begin() + dest + bytes);
+                memory.writeVuCode(u, dest, copy.data(), bytes);
+                ++simulatedMpgs;
+            }
             data[u] = rec.data;
             VU1Interpreter &vu = u == 1u ? *vu1 : *vu0;
             vu.state() = rec.state;
@@ -217,6 +239,9 @@ int main(int argc, char **argv)
     std::printf("calls=%zu repeat=%d vu_cycles=%llu time=%.3f s (%.2f ns/cycle)\n", records.size() - first, repeat,
                 static_cast<unsigned long long>(totalCycles), seconds,
                 totalCycles ? seconds * 1e9 / (static_cast<double>(totalCycles) * repeat) : 0.0);
+    std::printf("us/call=%.3f simulated_mpgs=%llu\n",
+                records.size() > first ? seconds * 1e6 / (static_cast<double>(records.size() - first) * repeat) : 0.0,
+                static_cast<unsigned long long>(simulatedMpgs));
 #ifdef VU1_COUNT
     std::printf("cycles=%llu pairs=%llu xgkick_cycles=%llu commit_cycles=%llu\n",g_cntCycles, g_cntPairs, g_cntXg, g_cntCommitWork);
 #endif

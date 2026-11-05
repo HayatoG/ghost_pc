@@ -19,6 +19,14 @@ public:
     uint64_t getVU1CodeGeneration() const { return vu1Generation; }
     uint8_t *getVU1Code() { return vu1Code; }
     const uint8_t *getVU1Code() const { return vu1Code; }
+    // What a VIF MPG does: copy into the code memory and bump the generation (always, even for identical bytes).
+    void writeVuCode(uint32_t unit, uint32_t offset, const uint8_t *bytes, uint32_t size)
+    {
+        uint8_t *code = unit == 1u ? vu1Code : vu0Code;
+        for (uint32_t i = 0; i < size; ++i)
+            code[offset + i] = bytes[i];
+        ++(unit == 1u ? vu1Generation : vu0Generation);
+    }
     uint8_t *getVU0Code() { return vu0Code; }
     const uint8_t *getVU0Code() const { return vu0Code; }
     // Packets are only collected here; the harness hashes them outside the timed region.

@@ -196,11 +196,26 @@ struct VU1InterpreterAccess::Native
 
     static constexpr uint32_t kPairs = VU::kMaxDecodedPairs;
 
+    // Code memory is validated per 512-byte block against a shadow copy: when the code generation changes (any VIF
+    // MPG, even one that rewrites identical bytes), a block is compared once, on first use; only a block whose
+    // bytes really changed gets a new epoch, and a pair stays valid while its stamp matches the epoch of its block
+    // (and of the next block, when the flag-elision lookahead of the pair reaches into it).
+    static constexpr uint32_t kBlockBytes = 512u;
+    static constexpr uint32_t kBlockPairs = kBlockBytes / 8u;
+    static constexpr uint32_t kBlocks = (kPairs * 8u + kBlockBytes - 1u) / kBlockBytes;
+
     struct Cache
     {
         std::array<NPair, kPairs> pairs{};
-        std::array<uint32_t, kPairs> stamp{};
-        uint32_t epoch = 1;
+        std::array<uint32_t, kPairs> stamp{};     // == epoch: checked under the current generation (fast path)
+        uint32_t epoch = 1;                       // bumped when the code generation changes
+        std::array<uint32_t, kPairs> blockStamp{}; // epoch of the pair's block when it was translated (0 = never)
+        std::array<uint32_t, kPairs> blockStampNext{}; // epoch of the next block, for pairs whose lookahead crosses
+        std::array<uint64_t, kBlocks> blockGeneration{};
+        std::array<uint32_t, kBlocks> blockEpoch{};
+        std::array<bool, kBlocks> shadowValid{};
+        std::array<uint8_t, kPairs * 8u> shadow{};
+        uint32_t nextEpoch = 0;
         const uint8_t *code = nullptr;
         const PS2Memory *memory = nullptr;
         uint32_t codeSize = 0;
@@ -407,7 +422,49 @@ struct VU1InterpreterAccess::Native
     static __forceinline void syncTo(VU &vu, uint64_t target)
     {
         if (vu.m_nextCommitCycle <= target)
-            syncSlow(vu, target);
+        {
+            // Common case: only MAC/status/clip entries are pending (no FDIV, EFU or interpreter leftovers). Then the
+            // per-cycle commits of syncSlow reduce to committing the ready FIFO entries in order.
+            if (!vu.m_fdiv.valid && (vu.m_efuMask | vu.m_flagMask | vu.m_storeMask | vu.m_vfWriteMask |
+                                     vu.m_viWriteMask | vu.m_accWriteMask) == 0u)
+                commitFlagsOnly(vu, target);
+            else
+                syncSlow(vu, target);
+        }
+    }
+
+    static __forceinline void commitFlagsOnly(VU &vu, uint64_t target)
+    {
+        VU1State &s = vu.m_state;
+        State &st = state(vu);
+        uint64_t next = ~0ull;
+        while (st.flagHead != st.flagTail)
+        {
+            const FlagEntry &entry = st.flags[st.flagHead & 15u];
+            if (entry.ready > target)
+            {
+                next = entry.ready;
+                break;
+            }
+            applyFlagEntry(s, entry);
+            ++st.flagHead;
+        }
+        vu.m_nextCommitCycle = next;
+    }
+
+    static __forceinline void applyFlagEntry(VU1State &s, const FlagEntry &entry)
+    {
+        if (entry.writes & W_MAC)
+            s.mac = entry.mac;
+        if (entry.writes & W_STATUS)
+        {
+            const uint32_t current = entry.status & 0xFu;
+            s.status = (s.status & 0xFF0u) | current | ((current | entry.extraSticky) << 6);
+        }
+        if (entry.writes & W_STICKY)
+            s.status = (s.status & 0x03Fu) | (entry.status & 0xFC0u);
+        if (entry.writes & W_CLIP)
+            s.clip = entry.clip;
     }
 
     __declspec(noinline) static void syncSlow(VU &vu, uint64_t target)
@@ -872,16 +929,53 @@ struct VU1InterpreterAccess::Native
         }
         NPair &p = cache.pairs[index];
         if (cache.stamp[index] != cache.epoch)
-        {
-            uint32_t words[2];
-            std::memcpy(words, code + pc, sizeof(words));
-            // A pair whose words did not change keeps its translation across code uploads.
-            if (cache.stamp[index] == 0u || p.d.lower != words[0] || p.d.upper != words[1] ||
-                (pc + 40u <= cache.codeSize && std::memcmp(p.lookahead, code + pc + 8u, sizeof(p.lookahead)) != 0))
-                translate(vu, p, code, pc);
-            cache.stamp[index] = cache.epoch;
-        }
+            revalidate(vu, cache, code, pc, index);
         return p;
+    }
+
+    // First use of a pair under a new code generation: keep the translation if its block (and the next one, when
+    // the lookahead crosses into it) still has the bytes it was translated from.
+    __declspec(noinline) static void revalidate(VU &vu, Cache &cache, const uint8_t *code, uint32_t pc, uint32_t index)
+    {
+        const uint32_t block = index / kBlockPairs;
+        if (cache.blockGeneration[block] != cache.generation)
+            checkBlock(cache, code, block);
+        // The lookahead (next 4 pairs) of the last 4 pairs of a block lies in the next block.
+        const bool crosses = (index % kBlockPairs) >= kBlockPairs - 4u && (block + 1u) * kBlockBytes < cache.codeSize;
+        if (crosses && cache.blockGeneration[block + 1u] != cache.generation)
+            checkBlock(cache, code, block + 1u);
+        if (cache.blockStamp[index] != cache.blockEpoch[block] ||
+            (crosses && cache.blockStampNext[index] != cache.blockEpoch[block + 1u]))
+        {
+            translate(vu, cache.pairs[index], code, pc);
+            cache.blockStamp[index] = cache.blockEpoch[block];
+            cache.blockStampNext[index] = crosses ? cache.blockEpoch[block + 1u] : 0u;
+        }
+        cache.stamp[index] = cache.epoch;
+    }
+
+    // First use of a block under a new code generation: a new epoch only if its bytes differ from the shadow.
+    __declspec(noinline) static void checkBlock(Cache &cache, const uint8_t *code, uint32_t block)
+    {
+        const uint32_t offset = block * kBlockBytes;
+        const uint32_t size = std::min(kBlockBytes, cache.codeSize - offset);
+        if (!cache.shadowValid[block] || std::memcmp(cache.shadow.data() + offset, code + offset, size) != 0)
+        {
+            std::memcpy(cache.shadow.data() + offset, code + offset, size);
+            cache.shadowValid[block] = true;
+            if (++cache.nextEpoch == 0u)
+            {
+                // Epoch wrap (after 2^32 block changes): forget every translation and every shadow.
+                cache.blockStamp.fill(0u);
+                cache.blockStampNext.fill(0u);
+                cache.shadowValid.fill(false);
+                cache.blockGeneration.fill(~0ull);
+                cache.shadowValid[block] = true;
+                cache.nextEpoch = 1u;
+            }
+            cache.blockEpoch[block] = cache.nextEpoch;
+        }
+        cache.blockGeneration[block] = cache.generation;
     }
 
     // ------------------------------------------------------------------------------------------ upper ops
@@ -1320,19 +1414,27 @@ struct VU1InterpreterAccess::Native
         const uint64_t generation = isVu1 ? memory->getVU1CodeGeneration() : memory->getVU0CodeGeneration();
         st.pcMask = vu.microAddressMask();
         st.codeSize = codeSize;
-        if (!cache.valid || cache.code != vuCode || cache.memory != memory || cache.codeSize != codeSize ||
-            cache.generation != generation)
+        bool recheck = cache.generation != generation;
+        if (!cache.valid || cache.code != vuCode || cache.memory != memory || cache.codeSize != codeSize)
         {
+            recheck = true;
+            // Another code memory: every block is compared again (the shadow is no longer trusted).
+            cache.shadowValid.fill(false);
+            cache.blockGeneration.fill(~0ull);
+            cache.code = vuCode;
+            cache.memory = memory;
+            cache.codeSize = codeSize;
+            cache.valid = true;
+        }
+        if (recheck)
+        {
+            // Blocks first used under a new generation are compared with the shadow (revalidate/checkBlock).
+            cache.generation = generation;
             if (++cache.epoch == 0u)
             {
                 cache.stamp.fill(0u);
                 cache.epoch = 1u;
             }
-            cache.code = vuCode;
-            cache.memory = memory;
-            cache.codeSize = codeSize;
-            cache.generation = generation;
-            cache.valid = true;
         }
 
         vu.m_activeVuData = vuData;
@@ -1341,6 +1443,8 @@ struct VU1InterpreterAccess::Native
         vu.m_activeMemory = memory;
         VU1State &s = vu.m_state;
 
+        // fesetround stays: _mm_getcsr/_mm_setcsr were measured ~5 % slower per call in the harness (MSVC seems to
+        // optimize the whole run loop less around the MXCSR intrinsics); see docs/vu1-native.md.
         const int previousRoundingMode = std::fegetround();
         const bool useVuRounding = std::fesetround(FE_TOWARDZERO) == 0;
         const uint64_t budgetEnd = vu.m_cycle + maxCycles;
