@@ -12,4 +12,7 @@
 //                 PS2X_GS_DEBUG=1 (D3D11 debug layer), PS2X_GS_FILTER=linear,
 //                 PS2X_GS_GPU_DRAW=0 (stage 1: draw on CPU, only present on GPU), PS2X_GS_WINDOW=0
 //                 (hide the D3D11 window).
+//  - "hw"         GSHwBackend: hardware renderer (render targets, GPU blend/depth; PSNR-equivalent, not
+//                 byte-exact). PS2X_GS_SCALE=1..8, PS2X_GS_WINDOW=0, PS2X_GS_HW_CPUFRAME=N, PS2X_GS_HW_VERBOSE=1
+//                 (see gs_backend_factory.cpp and ghost_pc/docs/gs-hw-backend.md).
 std::unique_ptr<GSRasterBackend> CreateGSRasterBackendFromEnv();

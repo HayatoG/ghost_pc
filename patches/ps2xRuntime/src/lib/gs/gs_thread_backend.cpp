@@ -4,6 +4,7 @@
 #include <exception>
 #include <iomanip>
 #include <iostream>
+#include <string>
 #include <utility>
 
 using namespace gs_thread;
@@ -112,7 +113,12 @@ namespace
 
     GSThreadedBackend::Options WithEnvOverrides(GSThreadedBackend::Options options)
     {
-        options.bands = EnvUnsigned("PS2X_GS_BANDS", options.bands);
+        // PS2X_GS_BANDS=N workers, "auto" = min(8, hardware threads - 4), 0/1 = single GS thread.
+        const char *bands = std::getenv("PS2X_GS_BANDS");
+        if (bands && std::string(bands) == "auto")
+            options.bands = GSBandedBackend::DefaultWorkers();
+        else
+            options.bands = EnvUnsigned("PS2X_GS_BANDS", options.bands);
         options.bandRows = EnvUnsigned("PS2X_GS_BAND_ROWS", options.bandRows);
         return options;
     }
@@ -384,9 +390,10 @@ void GSThreadedBackend::LogStatsIfDue(bool force)
     if (m_banded)
     {
         const GSBandedBackend::Stats b = m_banded->TakeStats();
-        std::cout << " bands.draws=" << b.draws << " bands.barriers=" << b.barriers
+        std::cout << " bands.draws=" << b.draws << " bands.serial=" << b.serialDraws << " bands.barriers=" << b.barriers
                   << " bands.hazard_barriers=" << b.hazardBarriers << "(layout=" << b.hazardLayout
-                  << " full=" << b.hazardFull << " tex=" << b.hazardTexture << " self=" << b.hazardSelf << " war=" << b.hazardWar << ")";
+                  << " tex=" << b.hazardTexture << " clut=" << b.hazardClut << " war=" << b.hazardWar
+                  << " xfer=" << b.hazardTransfer << ") bands.xfer_free=" << b.transfersNoBarrier;
     }
     std::cout << std::endl;
 }

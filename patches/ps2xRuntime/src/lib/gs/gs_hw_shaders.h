@@ -157,6 +157,8 @@ struct VSOut
     nointerpolation uint tex : TEXBASE;
 };
 
+static int gSubX = 0; // sub-texel position inside a scale x scale block (render-target sources)
+static int gSubY = 0;
 static uint gTbp = 0;
 static uint gClutWords = 0;
 
@@ -224,7 +226,7 @@ uint FetchTexel(int su, int sv)
     if ((gMisc.x & F_SRCSURF) != 0u)
     {
         uint s = gSrc.x;
-        int2 p = int2(su * (int)s, sv * (int)s);
+        int2 p = int2(su * (int)s + gSubX, sv * (int)s + gSubY);
         uint raw = PackColor(gSurf.Load(int3(p, 0)));
         if (tpsm == 0x01u) return ApplyTexa(gTex1.z, 0x01u, raw & 0x00FFFFFFu);
         if (tpsm == 0x02u || tpsm == 0x0Au) return ApplyTexa(gTex1.z, tpsm, (raw & 0x00FFFFFFu) | ((raw >> 31) << 31));
@@ -277,8 +279,52 @@ uint RoundToU8(float value)
     return ClampU8(truncated + ((fraction >= 0.5f) ? 1 : 0));
 }
 
+int FloorDiv(int a, int b) { return (a >= 0) ? (a / b) : -((-a + b - 1) / b); }
+
+// Render target sampled at the internal resolution: taps on the scaled grid, wrap modes applied to
+// the 1x texel that contains each tap (keeps the detail of upscaled render-to-texture).
+uint SampleScaledTap(int iu, int iv, int s)
+{
+    int qu = FloorDiv(iu, s), qv = FloorDiv(iv, s);
+    gSubX = iu - qu * s;
+    gSubY = iv - qv * s;
+    return SampleTexel(qu, qv);
+}
+
+uint SampleTextureScaled(float texUf, float texVf, int s)
+{
+    float su = texUf * (float)s, sv = texVf * (float)s;
+    if ((gMisc.x & F_LINEAR) == 0u)
+        return SampleScaledTap((int)floor(su), (int)floor(sv), s);
+    float sampleU = su - 0.5f;
+    float sampleV = sv - 0.5f;
+    int u0 = (int)floor(sampleU);
+    int v0 = (int)floor(sampleV);
+    float fx = sampleU - (float)u0;
+    float fy = sampleV - (float)v0;
+    uint c00 = SampleScaledTap(u0, v0, s);
+    uint c10 = SampleScaledTap(u0 + 1, v0, s);
+    uint c01 = SampleScaledTap(u0, v0 + 1, s);
+    uint c11 = SampleScaledTap(u0 + 1, v0 + 1, s);
+    uint result = 0u;
+    [unroll] for (uint ch = 0u; ch < 4u; ++ch)
+    {
+        uint sh = ch * 8u;
+        float f00 = (float)((c00 >> sh) & 0xFFu);
+        float f10 = (float)((c10 >> sh) & 0xFFu);
+        float f01 = (float)((c01 >> sh) & 0xFFu);
+        float f11 = (float)((c11 >> sh) & 0xFFu);
+        float top = mad(f10 - f00, fx, f00);
+        float bottom = mad(f11 - f01, fx, f01);
+        result |= RoundToU8(mad(bottom - top, fy, top)) << sh;
+    }
+    return result;
+}
+
 uint SampleTexture(float texUf, float texVf)
 {
+    if ((gMisc.x & F_SRCSURF) != 0u && gSrc.x > 1u)
+        return SampleTextureScaled(texUf, texVf, (int)gSrc.x);
     if ((gMisc.x & F_LINEAR) == 0u)
         return SampleTexel((int)texUf, (int)texVf);
     float sampleU = texUf - 0.5f;

@@ -1,29 +1,34 @@
 #pragma once
 
 // Banded software rasterizer (PS2X_GS_BANDS=N, used inside GSThreadedBackend; see
-// ghost_pc/docs/gs-threading.md).
+// ghost_pc/docs/gs-bands.md).
 //
 // GSBandedBackend is a GSRasterBackend that must be called from ONE thread (the GS thread of
 // GSThreadedBackend, the "dispatcher"). It owns
 //  - a master GSRasterBackend that executes everything that is not a draw (transfers, readbacks,
 //    presentation, direct VRAM access), and
 //  - N worker threads, each with its own GSCpuBackend sharing the same VRAM.
-// The screen is cut into horizontal stripes of `stripeRows` rows; stripe s belongs to worker
-// s % N. A draw is sent (in order) to every worker that owns a stripe it touches; the worker runs
-// the same GSCpuBackend::Submit once per owned stripe with the scissor rectangle clamped to the
-// stripe. Every pixel is therefore produced by exactly one worker, from the same inputs and in the
-// same order as the single-threaded backend, so the output is byte-identical.
+// Ownership: the screen is cut into horizontal stripes of `stripeRows` rows; stripe s belongs to
+// worker s % N. Every draw goes (in order) to the workers owning a stripe it touches; a worker runs
+// GSCpuBackend::Submit once per owned stripe with the scissor clamped to the stripe. For frame and
+// Z buffers (16/32 bit pixels) different pixels never share bytes, so as long as every byte is
+// reached through the same (format, width, base phase) "signature" during a pass, every byte has a
+// single owner and is updated in the original order: the output is byte-identical.
 //
-// Cross-band hazards are handled with barriers (all workers drained): before a draw samples a VRAM
-// range written by earlier draws (render to texture), before a draw writes a range written earlier
-// with a different pixel layout, before CLUT loads that read written ranges, and before any
-// non-draw command. After a barrier the workers' texture page caches are invalidated.
+// Hazards (page granularity, 512 pages of 8 KiB) end the pass with a barrier (all workers drained,
+// texture caches invalidated): a texture or CLUT read of a page written in the pass (RAW), a write
+// to a page sampled in the pass (WAR), a write/Z access to a page accessed with another signature,
+// and transfers/clears touching pages used in the pass. A draw that samples its own target, or
+// whose pixels alias each other (x beyond the buffer width), runs whole on worker 0 between two
+// barriers.
 
 #include "runtime/gs/gs_backend.h"
 
-#include <atomic>
+#include <array>
+#include <bitset>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -42,7 +47,10 @@ public:
         bool verifyStrict = false; // also compare after every draw (serializes the workers: hides races)
     };
 
-    // `master` is the backend that runs non-draw commands; workers are GSCpuBackend instances.
+    // Default worker count: min(8, hardware threads - 4), at least 2.
+    static unsigned DefaultWorkers();
+
+    // `master` is the backend that runs non-draw commands (a GSCpuBackend); workers are GSCpuBackend.
     GSBandedBackend(std::unique_ptr<GSRasterBackend> master, Config config);
     ~GSBandedBackend() override;
 
@@ -51,6 +59,10 @@ public:
 
     // Sends the batched draws to the workers. The dispatcher calls it before it blocks for work.
     void FlushPending();
+    // Waits for every queued draw (tools).
+    void Drain();
+    // Replay tools: restores a PS2X_GS_RECORD header into the master and every worker.
+    bool RestoreRecordedState(std::FILE *file);
 
     void Initialize(uint8_t *vram, uint32_t vramSize) override;
     void Reset() override;
@@ -72,22 +84,22 @@ public:
     // Diagnostics, valid on the dispatcher thread.
     struct Stats
     {
-        uint64_t draws = 0;
-        uint64_t barriers = 0;
-        uint64_t hazardBarriers = 0;
-        uint64_t hazardLayout = 0, hazardFull = 0, hazardTexture = 0, hazardClut = 0, hazardSelf = 0, hazardWar = 0;
+        uint64_t draws = 0;          // draws sent to the workers (banded)
+        uint64_t serialDraws = 0;    // draws run whole on worker 0 (self-sampling / aliasing)
+        uint64_t serialAlias = 0, serialFbZ = 0, serialSelf = 0;
+        uint64_t areaBanded = 0, areaSerial = 0; // bounding-box pixels (with margins)
+        uint64_t barriers = 0;       // all barriers (incl. present, readbacks)
+        uint64_t hazardBarriers = 0; // barriers caused by draws/CLUT/transfers
+        uint64_t hazardLayout = 0, hazardTexture = 0, hazardClut = 0, hazardWar = 0, hazardTransfer = 0;
+        uint64_t transfersNoBarrier = 0;
     };
     Stats TakeStats();
 
 private:
     struct WorkItem;
     struct Worker;
-    struct Range
-    {
-        uint32_t begin = 0;
-        uint32_t end = 0;
-        uint32_t layout = 0; // pixel layout signature (kind/psm/width)
-    };
+    static constexpr unsigned kPages = 512u; // 4 MiB / 8 KiB
+    using PageSet = std::bitset<kPages>;
 
     void StartWorkers();
     void StopWorkers();
@@ -98,23 +110,43 @@ private:
     void Barrier(bool hazard = false);
     void WaitIdle() const;
     void PrepareForWorkerCommand();
-    // 0 = none, 1 = layout change, 2 = dirty list full, 3 = texture read of written range,
-    // 4 = draw samples its own target (serial on master), 5 = write over a sampled range
-    int HazardForDraw(const GSDrawState &state, uint32_t rowsBound, Range writes[2], unsigned &writeCount) const;
-    void TextureRange(const GSDrawState &state, uint32_t &begin, uint32_t &end) const;
-    bool TextureOverlaps(const GSDrawState &state, const Range *ranges, unsigned count) const;
-    bool HazardForClut(const GSTex0Reg &tex0) const;
-    bool Overlaps(uint32_t begin, uint32_t end) const;
-    void AddRead(const Range &range);
-    void AddDirty(const Range &range);
+    void ResetPass();
+
+    uint64_t Signature(uint32_t psm, uint32_t basePage, uint32_t width) const;
+    struct TexelRect
+    {
+        uint32_t u0, u1, v0, v1;
+    };
+    bool TexelBounds(const GSPrimitiveBatch &batch, TexelRect &out) const;
+    void TexturePages(const GSDrawState &state, const TexelRect *texels, std::vector<uint16_t> &out);
+    void TransferPages(uint32_t basePointer, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y, uint32_t w,
+                       uint32_t h, std::vector<uint16_t> &out) const;
+    bool TransferHazard(const GSTransferCommand &command);
 
     std::unique_ptr<GSRasterBackend> m_master;
     const Config m_config;
     std::vector<std::unique_ptr<Worker>> m_workers;
 
-    std::vector<Range> m_reads; // VRAM ranges sampled (textures, CLUTs) since the last barrier
-    std::vector<Range> m_dirty; // VRAM ranges written by draws since the last barrier
-    bool m_cacheStale = false;  // workers' texture caches must be invalidated before the next draw
+    // Pass state (since the last barrier).
+    PageSet m_read;                     // pages sampled (textures, CLUTs)
+    PageSet m_dirty;                    // pages written / Z-tested by banded draws
+    std::array<uint64_t, kPages> m_sig{}; // signature of each dirty page
+    bool m_cacheStale = false;          // workers' texture caches must be invalidated before the next draw
+    bool m_serialMode = false;          // whole draws are chained on worker 0 (others idle)
+    void EndSerialMode();
+
+    // Texture page list of the previous draw (reused while tex0/clamp/size do not change).
+    struct TexKey
+    {
+        GSTex0Reg tex0{};
+        uint64_t clamp = 0;
+        uint16_t w = 0, h = 0;
+        bool valid = false;
+    } m_texKey;
+    std::vector<uint16_t> m_texPages;
+    std::vector<uint16_t> m_fbPages, m_zPages, m_scratchPages;
+    std::vector<uint16_t> m_uploadPages; // destination of the active host->local transfer
+
     Stats m_stats{};
 
     std::unique_ptr<GSRasterBackend> m_shadow;

@@ -32,9 +32,11 @@ namespace
         return value == "1" || value == "true" || value == "yes" || value == "on";
     }
 
-    std::unique_ptr<GSRasterBackend> MakeThreadedCpuBackend()
+    // `defaultBands`: worker count when PS2X_GS_BANDS is not set (0 = one GS thread, no bands).
+    std::unique_ptr<GSRasterBackend> MakeThreadedCpuBackend(unsigned defaultBands = 0u)
     {
         GSThreadedBackend::Options options{};
+        options.bands = defaultBands;
         const std::string queueKb = EnvLower("PS2X_GS_QUEUE_KB");
         if (!queueKb.empty())
         {
@@ -107,6 +109,14 @@ namespace
 std::unique_ptr<GSRasterBackend> CreateGSRasterBackendFromEnv()
 {
     const std::string choice = EnvLower("PS2X_GS");
+    // Default CPU path (PS2X_GS unset or "cpu"): GS thread + banded rasterizer with
+    // min(8, hardware threads - 4) workers (docs/gs-bands.md); byte-identical to the serial one.
+    // PS2X_GS=cpu-serial: the single-threaded GSCpuBackend on the guest thread (reference, PS2X_GS_RECORD).
+    // PS2X_GS=cpu-thread: GS thread without bands unless PS2X_GS_BANDS is set.
+    if (choice.empty() || choice == "cpu")
+        return MakeThreadedCpuBackend(GSBandedBackend::DefaultWorkers());
+    if (choice == "cpu-serial")
+        return std::make_unique<GSCpuBackend>();
     if (choice == "cpu-thread" || choice == "cpu-mt")
         return MakeThreadedCpuBackend();
     if (choice == "hw")

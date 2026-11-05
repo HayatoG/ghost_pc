@@ -293,19 +293,54 @@ namespace
             if (i < startAt || (i % step) != 0)
                 continue;
             hw.backend->SnapshotVram(snap);
-            for (uint32_t p = 0; p < 512; ++p)
+            uint32_t pFirst = 0, pLast = 511;
+            if (recs[i].type == 1)
+            {
+                // only the pages of this primitive's frame buffer (CT32 page = 64x32)
+                const auto *bt = reinterpret_cast<const GSPrimitiveBatch *>(recs[i].data.data());
+                const GSContext &c = bt->state.context;
+                pFirst = c.frame.fbp;
+                pLast = std::min<uint32_t>(511u, c.frame.fbp + std::max<uint32_t>(c.frame.fbw, 1u) * (c.scissor.y1 / 32u + 1u) - 1u);
+            }
+            else
+                continue;
+            static std::vector<uint32_t> prevBad(512, 0);
+            for (uint32_t p = pFirst; p <= pLast; ++p)
             {
                 uint32_t bad = 0;
                 for (uint32_t b = 0; b < 8192; ++b)
                     if (std::abs(static_cast<int>(cvram[p * 8192 + b]) - static_cast<int>(hw.vram[p * 8192 + b])) > tol)
                         ++bad;
-                if (bad >= badBytes)
+                const uint32_t before = prevBad[p];
+                prevBad[p] = bad;
+                if (i > startAt && bad >= before + badBytes)
                 {
                     std::printf("FIRST divergence after record %zu (checked every %u): page %u (block 0x%x) %u bytes off by >%d\n", i, step, p,
                                 p * 32, bad, tol);
                     const size_t from = i >= step ? i - step + 1 : 0;
                     for (size_t k = from; k <= i && k < from + 8; ++k)
                         PrintPrim(recs[k]);
+                    {
+                        const auto *bt = reinterpret_cast<const GSPrimitiveBatch *>(recs[i].data.data());
+                        const GSContext &c = bt->state.context;
+                        const uint32_t fbw = std::max<uint32_t>(c.frame.fbw, 1u);
+                        int shown = 0;
+                        for (uint32_t y = c.scissor.y0; y <= c.scissor.y1 && shown < 10; ++y)
+                            for (uint32_t x = c.scissor.x0; x <= c.scissor.x1 && shown < 10; ++x)
+                            {
+                                const uint32_t a = GSMem::ReadCT32(cvram.data(), c.frame.fbp * 32u, fbw, x, y);
+                                const uint32_t h = GSMem::ReadCT32(hw.vram.data(), c.frame.fbp * 32u, fbw, x, y);
+                                int md = 0;
+                                for (int ch = 0; ch < 4; ++ch)
+                                    md = std::max(md, std::abs(static_cast<int>((a >> (8 * ch)) & 0xFFu) - static_cast<int>((h >> (8 * ch)) & 0xFFu)));
+                                if (md <= tol)
+                                    continue;
+                                const uint32_t za = GSMem::ReadZ16S(cvram.data(), c.zbuf.zbp * 32u, fbw, x, y);
+                                const uint32_t zh = GSMem::ReadZ16S(hw.vram.data(), c.zbuf.zbp * 32u, fbw, x, y);
+                                std::printf("   px %u,%u cpu %08x hw %08x  z16s cpu %u hw %u\n", x, y, a, h, za, zh);
+                                ++shown;
+                            }
+                    }
                     std::printf("hw: %s\n", hw.backend->StatsLine().c_str());
                     return 1;
                 }
