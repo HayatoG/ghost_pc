@@ -1,5 +1,6 @@
 #include "runtime/gs/gs_thread_backend.h"
 
+#include <cstdlib>
 #include <exception>
 #include <iomanip>
 #include <iostream>
@@ -11,6 +12,7 @@ namespace
 {
     constexpr double kStatsPeriodSeconds = 10.0;
     constexpr uint64_t kStatsCheckEvery = 64u; // commands between clock checks on the GS thread
+    constexpr size_t kReleaseEvery = 64u;      // commands between progress reports to the queue
 
     // Same rule as GSCpuBackend::ClearFramebuffer: the result depends only on the attached VRAM, the
     // frame width and the frame PSM, so the producer can answer without waiting for the GS thread.
@@ -98,9 +100,40 @@ const char *gs_thread::WaitReasonName(WaitReason reason)
     }
 }
 
-GSThreadedBackend::GSThreadedBackend(std::unique_ptr<GSRasterBackend> inner, Options options)
-    : m_inner(std::move(inner)), m_options(options), m_queue(options.queueCapacityBytes)
+namespace
 {
+    unsigned EnvUnsigned(const char *name, unsigned fallback)
+    {
+        const char *value = std::getenv(name);
+        if (!value || !*value)
+            return fallback;
+        return static_cast<unsigned>(std::strtoul(value, nullptr, 10));
+    }
+
+    GSThreadedBackend::Options WithEnvOverrides(GSThreadedBackend::Options options)
+    {
+        options.bands = EnvUnsigned("PS2X_GS_BANDS", options.bands);
+        options.bandRows = EnvUnsigned("PS2X_GS_BAND_ROWS", options.bandRows);
+        return options;
+    }
+}
+
+GSThreadedBackend::GSThreadedBackend(std::unique_ptr<GSRasterBackend> inner, Options options)
+    : m_inner(std::move(inner)), m_options(WithEnvOverrides(options)), m_queue(m_options.queueCapacityBytes)
+{
+    if (m_options.bands >= 2u)
+    {
+        GSBandedBackend::Config config;
+        config.workers = m_options.bands;
+        config.stripeRows = m_options.bandRows;
+        config.verify = EnvUnsigned("PS2X_GS_BANDS_VERIFY", 0u) != 0u;
+        config.verifyStrict = EnvUnsigned("PS2X_GS_BANDS_VERIFY", 0u) == 2u; // 1 = at Present, 2 = per draw
+        auto banded = std::make_unique<GSBandedBackend>(std::move(m_inner), config);
+        m_banded = banded.get();
+        m_inner = std::move(banded);
+        std::cout << "[gs-thread] banded rasterizer: workers=" << config.workers << " stripe_rows="
+                  << config.stripeRows << std::endl;
+    }
     m_statsStart = Clock::now();
     m_thread = std::thread([this]
                            { ThreadMain(); });
@@ -257,15 +290,45 @@ GSTransferSnapshot GSThreadedBackend::GetTransferSnapshot() const
 
 void GSThreadedBackend::ThreadMain()
 {
+    // Takes the whole backlog per lock round trip and reports progress in chunks: the producer is
+    // woken once per chunk (queue hysteresis) instead of once per command. Commands that something
+    // may be waiting on (CallCmd: Present/readbacks, FlushCmd: Drain, QuitCmd) are released at once.
+    Queue::Batch batch;
+    size_t doneBytes = 0;
+    size_t doneItems = 0;
+    uint64_t lastTicket = 0;
     for (;;)
     {
-        Queue::Entry entry = m_queue.Pop();
-        const bool keepRunning = Execute(entry.item);
-        m_queue.Complete(entry.ticket);
-        if (!keepRunning)
-            return;
-        if (m_options.debugStats && (++m_executed % kStatsCheckEvery) == 0u)
-            LogStatsIfDue(false);
+        if (m_banded)
+            m_banded->FlushPending(); // hand queued draws to the workers before blocking for more
+        m_queue.PopBatch(batch);
+        for (Queue::Entry &entry : batch)
+        {
+            const bool urgent = std::holds_alternative<CallCmd>(entry.item) ||
+                                std::holds_alternative<FlushCmd>(entry.item) ||
+                                std::holds_alternative<QuitCmd>(entry.item);
+            const bool keepRunning = Execute(entry.item);
+            doneBytes += entry.bytes;
+            ++doneItems;
+            lastTicket = entry.ticket;
+            if (urgent || doneItems >= kReleaseEvery)
+            {
+                m_queue.Release(doneBytes, doneItems, lastTicket);
+                doneBytes = 0;
+                doneItems = 0;
+            }
+            if (!keepRunning)
+                return;
+            if (m_options.debugStats && (++m_executed % kStatsCheckEvery) == 0u)
+                LogStatsIfDue(false);
+        }
+        batch.clear();
+        if (doneItems != 0u)
+        {
+            m_queue.Release(doneBytes, doneItems, lastTicket);
+            doneBytes = 0;
+            doneItems = 0;
+        }
     }
 }
 
@@ -317,6 +380,13 @@ void GSThreadedBackend::LogStatsIfDue(bool force)
             continue;
         std::cout << " sync." << WaitReasonName(static_cast<WaitReason>(i)) << "=" << w.count
                   << "/avg_ms=" << (w.totalMs / static_cast<double>(w.count)) << "/max_ms=" << w.maxMs;
+    }
+    if (m_banded)
+    {
+        const GSBandedBackend::Stats b = m_banded->TakeStats();
+        std::cout << " bands.draws=" << b.draws << " bands.barriers=" << b.barriers
+                  << " bands.hazard_barriers=" << b.hazardBarriers << "(layout=" << b.hazardLayout
+                  << " full=" << b.hazardFull << " tex=" << b.hazardTexture << " self=" << b.hazardSelf << " war=" << b.hazardWar << ")";
     }
     std::cout << std::endl;
 }

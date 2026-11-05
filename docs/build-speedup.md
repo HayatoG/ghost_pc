@@ -201,3 +201,29 @@ O `build_speedup.patch` e os scripts foram testados contra uma **cópia** da ár
 - `cmake`/`ninja` reais com o patch (passos 6–8).
 - sccache com PCH (documentação, não testado).
 - Dividir funções gigantes no gerador.
+
+## 9. Aplicado em 05/11
+
+Prelude leve aplicado em `work/ps2recomp_game` (backup em `work/build_speedup/backup_20261105_002712/`; `check_runner_prelude.py`: 29 declaracoes, 0 divergencias). Os 41 808 `.cpp` gerados foram **retargetados com o script** (troca do include no lugar, sem rodar o `ps2_recomp`; mesma troca ja esta nas 5 emissoes do gerador, entao uma regeneracao futura produz o mesmo). Os `.cpp` gerados nao sao versionados. Logs: `logs/build_full_prelude3_20261105.log`.
+
+| Medida (maquina parada, `-j14`) | Antes | Depois |
+|---|---|---|
+| Editar 1 `.cpp` de `src/lib/gs` | 14,6 s | ~15 s (igual: ja era so o runtime + link) |
+| Editar `ps2_vu1.h` / `gs_frontend.h` (header do fechamento do PCH) | PCH + 1307 unidades unity (~12 min) | **34,6 s** no total (touch de `ps2_vu1.h`, `gs_frontend.h` e `gs_frontend.cpp`: 42 passos, 0 unidades do runner, so ~39 `.cpp` do runtime + `ps2_runtime.lib` + link) |
+| Rebuild completo (unico, ao aplicar) | ~12 min | ~12,5 min (00:38 -> 00:51, 1397 passos) |
+| Identidade | | `regress.ps1 -Scenario menu`: byte-identico (md5 igual, exit 0) |
+
+Contagem de unidades: antes, `ps2_vu1.h` estava no fechamento do `cmake_pch.cxx.obj` (que as 1307 unidades unity tem como dependencia implicita). Depois o PCH leve nao inclui `ps2_vu1.h`/`gs/*`/`ps2_runtime.h`; `ninja -n` nao serve para contar aqui (o dry-run para em "Re-running CMake" quando o `CMakeLists.txt` foi tocado), por isso a prova foi o rebuild real (0 unidades unity no log).
+
+### Armadilhas encontradas
+- **Reconfigure custa ~145 s** (geracao do `build.ninja` com 41 mil fontes): nao tocar `CMakeLists.txt` sem necessidade; qualquer fonte nova em `src/lib` listada explicitamente exige reconfigure.
+- **Nunca configure com FetchContent online**: um `cmake` interrompido no meio do `git clone` do raylib apagou `_deps/raylib-src` e gerou um `build.ninja` sem include do raylib. Restaurado de `out/build/_deps/raylib-src`. Use `-DFETCHCONTENT_FULLY_DISCONNECTED=ON` (o `work/cm.bat` ja faz).
+- Arquivos novos em `src/lib` (ex.: `ps2_vu1_native.cpp`, `ps2_postfx_crt.cpp`) precisam estar na lista do `ps2xRuntime/CMakeLists.txt`, senao o link falha com LNK2019 (nao e erro do prelude). Se outro agente alterar o `CMakeLists.txt` a arvore `build_dev` so reconfigura quando a data do arquivo for mais nova que o `build.ninja`; na duvida rode `work/cm_dev.bat`.
+- Adicionar metodo de `PS2Runtime` chamado pelo gerador: declarar em `ps2_runner_prelude.h`.
+
+### Ferramentas
+- `tools/build.ps1` (raiz, generico): `powershell -NoProfile -File ..\tools\build.ps1 [-BuildDir work\ps2recomp_game\out\build_dev] [-Target ps2EntryRunner] [-Jobs 14] [-DryRun] [-Explain] [-Recompact]` a partir de `ghost_pc/`. Usa o ninja do VS, pega `work\BUILD.lock.d` (espera ate 30 min), grava `logs/build_*.log`, imprime o tempo, e avisa se o `.ninja_log`/`.ninja_deps` encolheram ou se o ninja disse "starting over" (estado em `<build>\.build_ps1_state`).
+- `tools/sync_patches.ps1` (em `ghost_pc/`): regenera `patches/` (ver `patches/README.md`).
+
+### build_dev (runner em /Od)
+Configurado com `work/cm_dev.bat` (mesmas opcoes do `build_perf` + `-DPS2X_RUNNER_OPT=dev`; semeado com `ThirdParty/` e raylib de `build_perf` para nao baixar nada). Rebuild completo medido: **~5,3 min** (00:57 -> 01:02, incluindo contencao com outros agentes compilando e ~2,5 min de configure). Ressalvas: nao medir FPS; `/Od` pode divergir em bits no FP (regress pode nao ser identico: gravar referencia propria dev-vs-dev); risco de pilha (subir `PS2X_STACK_RESERVE_MB` para 512 se `0xC00000FD`). **Pendente [PREENCHER]:** o link do `build_dev` ainda falhou em 05/11 01:12 por fontes WIP de outros agentes (`GSHwBackend` ainda fora do `CMakeLists.txt`; LNK2019), nao pelo prelude: todas as unidades do runner em `/Od` compilaram. Depois que a integracao do GS por hardware entrar no CMake, rode `work\cm_dev.bat` + `build.ps1 -BuildDir ...build_dev` e depois `regress.ps1 -Exe` com o exe dev (nao medido ainda).

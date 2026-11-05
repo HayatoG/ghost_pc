@@ -18,6 +18,7 @@
 // waits per reason, printed as "[gs-thread]" every 10 s and once at shutdown.
 
 #include "runtime/gs/gs_backend.h"
+#include "runtime/gs/gs_banded_backend.h"
 #include "runtime/gs/gs_command_queue.h"
 
 #include <array>
@@ -109,10 +110,17 @@ class GSThreadedBackend final : public GSRasterBackend
 public:
     struct Options
     {
-        // ~310 bytes per queued draw: 1 MiB is ~3000 draws (~6 menu frames of ~500 draws), or less with
-        // uploads. Bigger means more input/present latency when the rasterizer is the bottleneck.
-        size_t queueCapacityBytes = 1u << 20;
+        // ~310 bytes per queued draw. The 3D gameplay scene issues ~21.7k commands (~6.7 MB) per frame,
+        // so 1 MiB (the old default) kept the guest blocked on a full queue about 44 % of the time;
+        // 32 MiB lets the guest run a few frames ahead of the rasterizer (see docs/gs-threading.md).
+        // Bigger means more present latency when the rasterizer is the bottleneck.
+        size_t queueCapacityBytes = 32u << 20;
         bool debugStats = false;
+        // Banded rasterizer (gs_banded_backend.h): N worker threads, each owning horizontal stripes of
+        // `bandRows` rows. 0/1 = the inner backend runs on the GS thread alone. Env: PS2X_GS_BANDS,
+        // PS2X_GS_BAND_ROWS (override these fields).
+        unsigned bands = 0;
+        uint32_t bandRows = 32;
     };
 
     GSThreadedBackend(std::unique_ptr<GSRasterBackend> inner, Options options);
@@ -166,6 +174,7 @@ private:
     void LogStatsIfDue(bool force);
 
     std::unique_ptr<GSRasterBackend> m_inner; // touched only by the GS thread after construction
+    GSBandedBackend *m_banded = nullptr;      // m_inner when banded (to flush its batches before blocking)
     const Options m_options;
     mutable Queue m_queue;
     std::atomic<bool> m_hasVram{false};

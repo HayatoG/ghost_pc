@@ -8,6 +8,14 @@ O PS2Recomp (GPL-3.0) fica em `third_party/` (fora do git). Nossas mudanças sã
 | `ps2xRuntime/include/ps2_virtual_pad.h`, `src/lib/ps2_virtual_pad.cpp` | Gamepad virtual por script de quadros |
 | `ps2xRuntime/include/ps2_frame_stats.h`, `src/lib/ps2_frame_stats.cpp` | Medidor de FPS (CSV por segundo + resumo com percentis) |
 | `ps2xRuntime/tests/vpad_test.cpp` | Teste isolado do parser do pad virtual |
+| `ps2xRuntime/include/ps2_runner_prelude.h`, `ps2_runner_light_on.h`, `ps2_r5900_context.h`, `include/runtime/ps2_memory_map.h`, `tools/check_runner_prelude.py` | **Prelude leve do runner** (05/11): o codigo gerado inclui `ps2_runner_prelude.h` (classe `PS2Runtime` enxuta + `R5900Context`) em vez de `ps2_runtime.h`; editar GS/VU1/audio/pad/runtime deixa de refazer os ~1300 lotes do runner. **Ao adicionar um metodo de `PS2Runtime` que o gerador chame, declare-o no prelude** (`check_runner_prelude` confere). Detalhes: `../docs/build-speedup.md` |
+| `ps2xRuntime/include/runtime/gs/gs_banded_backend.h`, `gs_thread_backend.h`, `gs_command_queue.h`, `gs_backend_factory.h`, `gs_feature_stats.h`, `src/lib/gs/gs_banded_backend.cpp`, `gs_thread_backend.cpp`, `gs_backend_factory.cpp`, `gs_feature_stats.cpp` | GS em thread dedicada (`PS2X_GS=cpu-thread`), faixas paralelas (bands), fabrica de backends por ambiente e contadores de recursos |
+| `ps2xRuntime/include/runtime/gs/gs_rhi_hw.h`, `src/lib/gs/gs_rhi_hw_d3d11.cpp`, `gs_hw_shaders.h`, `gs_gpu_shaders.h` | RHI/shaders do backend GS por hardware (D3D11) |
+| `ps2xRuntime/src/lib/vu/ps2_vu1_access.h` (e `ps2_vu1_native.cpp`, quando existir) | Acesso do VU1 nativo ao interpretador (`PS2X_VU1_NATIVE`) |
+| `ps2xRuntime/tests/gs_policy_test.cpp`, `tests/vu1_replay/` | Testes offline: politica do GS e harness de replay do VU1 (so codigo; gravacoes `.rec` nao entram) |
+| `ps2xRuntime/include/ps2_irq_stats.h`, `ps2_sampling_profiler.h`, `src/lib/ps2_sampling_profiler.cpp`, `src/lib/Kernel/Stubs/GameLog.h` | Contadores de IRQ, profiler por amostragem, log do jogo |
+
+**Gerado por `tools/sync_patches.ps1`** (nao edite o `.patch` e os arquivos novos a mao): ele refaz o `ps2xRuntime-modified.patch` (arquivos existentes no `third_party/PS2Recomp` vs `work/ps2recomp_game`: ps2xRuntime, ps2xRecomp, ps2xIOP, CMake), copia os arquivos novos de codigo (exclui `src/runner`, `ps2_recompiled_*`, binarios, `.rec`/`.png`), confere `git apply --check` e grava `logs/sync_patches_*.log`.
 | `ps2xRuntime/include/runtime/gs/gs_rhi.h`, `src/lib/gs/gs_rhi_d3d11.cpp`, `include/runtime/gs/gs_gpu_backend.h`, `src/lib/gs/gs_gpu_backend.cpp` | Backend GS por GPU, etapa 1 (RHI D3D11 + `GSGpuBackend` que delega ao `GSCpuBackend` e apresenta pela GPU). **Ainda não ligado ao CMake/`gs_frontend.cpp`**: ver `gs_gpu_integration.txt` e `../../docs/gs-gpu-plan.md` |
 
 `ps2xRuntime/src/lib/ghost_overrides.cpp` (arquivo novo): **overrides por endereço específicos deste jogo** (`SLES_530.20`), aplicados por `PS2_REGISTER_GAME_OVERRIDE`. Ligam funções internas do SDK que não têm HLE (`fioInit`, `fioIoctl`, `_sceCdSCmd`, `_sceCdNCmd`) a handlers genéricos (`ret0`/`ret1`). **Por que aqui e não no TOML do recompilador?** Acrescentar um stub no TOML muda `ps2_recompiled_stubs.h`, que todo arquivo gerado inclui — rebuild completo (~14 min). Um override é um arquivo só (~1 min). Para um novo "muro": uma linha em `kOverrides`.
@@ -29,6 +37,22 @@ O PS2Recomp (GPL-3.0) fica em `third_party/` (fora do git). Nossas mudanças sã
 | `PS2X_HEARTBEAT` (linhas `[hb-irq]`) | Com o heartbeat ligado, também imprime contadores das interrupções INTC/DMAC (`include/ps2_irq_stats.h`): `registered`, `dispatch`, `masked`, `not_recompiled`, `queued`, máscara habilitada e últimos valores. Distingue "o runtime nunca gera a interrupção" de "causa mascarada" e de "handler sem função gerada" (este último também vai para `PS2X_MISSING_LOG`) |
 | `PS2X_VIDEO_HZ` | Taxa de vblank emulada: `60` (NTSC, padrão) ou `50` (PAL). O launcher define pela região do `game.toml` |
 | `PS2X_GS` | *(integrado ao patch; ver `gs_gpu_integration.txt`)* `cpu` (padrão) ou `d3d11`. Extras: `PS2X_GS_VSYNC=1`, `PS2X_GS_DEBUG=1`, `PS2X_GS_FILTER=linear` |
+| `PS2X_GS` (extras) | `cpu-thread` (alias `cpu-mt`): `GSCpuBackend` numa thread de GS dedicada. `PS2X_GS_QUEUE_KB` = capacidade da fila de comandos (KB) |
+| `PS2X_GS_BANDS`, `PS2X_GS_BAND_ROWS` | Numero de faixas/trabalhadores e linhas por faixa do rasterizador paralelo (`gs_banded_backend`) |
+| `PS2X_GS_BANDS_VERIFY` | `1` = compara as faixas com a referencia no Present; `2` = a cada draw |
+| `PS2X_GS_GIF_STATE` | `1` liga o parser de GIF com estado (muda comportamento; padrao desligado) |
+| `PS2X_GS_GPU_DRAW` | `0/off`: backend d3d11 so apresenta (etapa 1); padrao desenha na GPU |
+| `PS2X_GS_WINDOW` | `0/off`: sem janela do d3d11 |
+| `PS2X_GS_GPU_VERIFY` | Verificacao GPU x CPU (numero = modo/limite de quadros, ver `gs_gpu_backend.cpp`) |
+| `PS2X_GS_GPU_MAXBATCH` | Limita o tamanho do lote de primitivas na GPU (bissecao) |
+| `PS2X_GS_GPU_MASK` | Mascara de classes de desenho enviadas a GPU (hex/dec) |
+| `PS2X_GS_GPU_HAZARD_LOG` | Nivel do log de hazards de ordem de escrita |
+| `PS2X_GS_GPU_DOUBLE_Z` | `1`: Z em dupla precisao no shader |
+| `PS2X_GS_GPU_FMA` | Modo de FMA no shader (numero) |
+| `PS2X_GS_RECORD`, `PS2X_GS_RECORD_VSYNC`, `PS2X_GS_RECORD_PRESENTS` | Grava o fluxo de comandos do GS (arquivo, vsync inicial, no de presents) para replay offline |
+| `PS2X_GS_FEATURES` | `1`: conta recursos do GS usados (`gs_feature_stats`) |
+| `PS2X_VU1_NATIVE` | `1`: executor nativo de micro-programas VU1 |
+| `PS2X_VU1_RECORD`, `PS2X_VU1_RECORD_VSYNC`, `PS2X_VU1_RECORD_COUNT` | Grava chamadas de micro-programa do VU1 (arquivo, vsync inicial, quantidade; padrao 4000) para `tests/vu1_replay` |
 
 Com o relógio `guest`, o script avança com o jogo e não com a janela: uma captura cai no mesmo ponto do jogo seja qual for a velocidade do host ou do backend de GS (o script ainda é consultado uma vez por quadro do host, então cada passo vale no primeiro quadro do host cujo vsync é ≥ `<frame>`; o log `[pad] shot … (guest vsync N)` mostra onde caiu).
 

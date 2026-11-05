@@ -9,5 +9,7 @@
 //  - "cpu-thread" GSThreadedBackend + GSCpuBackend on a dedicated GS thread (alias "cpu-mt");
 //                 PS2X_GS_QUEUE_KB=<n> sets the queue size, PS2X_GS_DEBUG=1 prints "[gs-thread]";
 //  - "d3d11"      GSGpuBackend (only when built with PS2X_HAS_GS_GPU). Options: PS2X_GS_VSYNC=1,
-//                 PS2X_GS_DEBUG=1 (D3D11 debug layer), PS2X_GS_FILTER=linear.
+//                 PS2X_GS_DEBUG=1 (D3D11 debug layer), PS2X_GS_FILTER=linear,
+//                 PS2X_GS_GPU_DRAW=0 (stage 1: draw on CPU, only present on GPU), PS2X_GS_WINDOW=0
+//                 (hide the D3D11 window).
 std::unique_ptr<GSRasterBackend> CreateGSRasterBackendFromEnv();

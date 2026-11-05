@@ -1,14 +1,18 @@
 #pragma once
 
 // Bounded multi-producer / single-consumer FIFO used by the GS thread (docs/gs-gpu-step2-design.md,
-// section 1). Plain std::mutex + condition_variable; no lock-free tricks.
+// section 1; tuning in ghost_pc/docs/gs-threading.md). Plain std::mutex + condition_variable.
 //  - Capacity is counted in bytes (each Push states its cost). A producer blocks while the queue is
-//    over capacity (backpressure), except when the queue is empty (an oversized item must still
-//    pass) or when it asks to bypass the limit (synchronous requests that wait anyway).
-//  - Every item gets a ticket in push order. The consumer calls Complete(ticket) after executing it;
-//    WaitCompleted(ticket) blocks until that item (and therefore every earlier one) has run.
-//    Complete/WaitCompleted go through the same mutex, so whatever the consumer wrote while running
-//    the item is visible to the waiter (happens-before), without extra synchronisation.
+//    over capacity (backpressure) and resumes only when the backlog fell to the low watermark
+//    (hysteresis), so it wakes once per chunk of work instead of once per popped item. It never
+//    blocks when the queue is empty (an oversized item must still pass) or when it asks to bypass
+//    the limit (synchronous requests that wait anyway).
+//  - The consumer takes the whole backlog with one PopBatch (a swap under the lock), executes it
+//    without touching the mutex, and reports progress with Release(): bytes/items finished and the
+//    last ticket completed. Bytes stay accounted until released, so backpressure sees in-flight work.
+//  - Every item gets a ticket in push order. WaitCompleted(ticket) blocks until that item (and
+//    therefore every earlier one) has been released as completed. Release/WaitCompleted go through
+//    the same mutex, so whatever the consumer wrote while running the item is visible to the waiter.
 
 #include <algorithm>
 #include <chrono>
@@ -27,7 +31,9 @@ public:
     {
         T item;
         uint64_t ticket = 0;
+        size_t bytes = 0;
     };
+    using Batch = std::deque<Entry>;
 
     // Diagnostic window; reset by TakeStats().
     struct Stats
@@ -42,7 +48,7 @@ public:
     };
 
     explicit GSBoundedQueue(size_t capacityBytes)
-        : m_capacityBytes(std::max<size_t>(capacityBytes, 1u))
+        : m_capacityBytes(std::max<size_t>(capacityBytes, 1u)), m_resumeBytes(m_capacityBytes / 2u)
     {
     }
 
@@ -55,50 +61,64 @@ public:
         if (!bypassLimit && MustWaitForSpace(bytes))
             WaitForSpace(lock, bytes);
         const uint64_t ticket = ++m_lastTicket;
-        m_items.push_back(Slot{Entry{std::move(item), ticket}, bytes});
+        m_items.push_back(Entry{std::move(item), ticket, bytes});
         m_bytes += bytes;
+        ++m_itemsTotal;
         ++m_stats.pushed;
         m_stats.maxBytes = std::max(m_stats.maxBytes, m_bytes);
-        m_stats.maxItems = std::max(m_stats.maxItems, m_items.size());
+        m_stats.maxItems = std::max(m_stats.maxItems, m_itemsTotal);
+        const bool wake = m_consumerWaiting;
         lock.unlock();
-        m_notEmpty.notify_one();
+        if (wake)
+            m_notEmpty.notify_one();
         return ticket;
     }
 
-    // Blocks until an item is available (single consumer).
-    Entry Pop()
+    // Blocks until work is available, then moves the whole backlog into `out` (single consumer).
+    void PopBatch(Batch &out)
     {
         std::unique_lock<std::mutex> lock(m_mutex);
         if (m_items.empty())
         {
             const auto start = Clock::now();
+            m_consumerWaiting = true;
             m_notEmpty.wait(lock, [this]
                             { return !m_items.empty(); });
+            m_consumerWaiting = false;
             m_stats.consumerIdleMs += ElapsedMs(start);
         }
-        Slot slot = std::move(m_items.front());
-        m_items.pop_front();
-        m_bytes -= slot.bytes;
-        lock.unlock();
-        m_notFull.notify_all();
-        return std::move(slot.entry);
+        out.swap(m_items);
     }
 
-    // Called by the consumer, in ticket order, after the item has been executed.
-    void Complete(uint64_t ticket)
+    // Consumer: `bytes`/`items` finished since the last call; `completedTicket` (0 = unchanged) is the
+    // last item executed. Wakes blocked producers once the backlog reached the low watermark, and
+    // synchronous waiters whose ticket completed.
+    void Release(size_t bytes, size_t items, uint64_t completedTicket)
     {
+        bool wakeProducers = false;
+        bool wakeWaiters = false;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
-            m_completedTicket = std::max(m_completedTicket, ticket);
+            m_bytes -= bytes;
+            m_itemsTotal -= items;
+            if (completedTicket > m_completedTicket)
+                m_completedTicket = completedTicket;
+            wakeProducers = m_producersWaiting != 0u && (m_bytes <= m_resumeBytes || m_itemsTotal == 0u);
+            wakeWaiters = m_completeWaiters != 0u;
         }
-        m_completed.notify_all();
+        if (wakeProducers)
+            m_notFull.notify_all();
+        if (wakeWaiters)
+            m_completed.notify_all();
     }
 
     void WaitCompleted(uint64_t ticket)
     {
         std::unique_lock<std::mutex> lock(m_mutex);
+        ++m_completeWaiters;
         m_completed.wait(lock, [this, ticket]
                          { return m_completedTicket >= ticket; });
+        --m_completeWaiters;
     }
 
     Stats TakeStats()
@@ -114,12 +134,6 @@ public:
 private:
     using Clock = std::chrono::steady_clock;
 
-    struct Slot
-    {
-        Entry entry;
-        size_t bytes = 0;
-    };
-
     static double ElapsedMs(Clock::time_point start)
     {
         return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
@@ -127,14 +141,17 @@ private:
 
     bool MustWaitForSpace(size_t bytes) const
     {
-        return !m_items.empty() && m_bytes + bytes > m_capacityBytes;
+        return m_itemsTotal != 0u && m_bytes + bytes > m_capacityBytes;
     }
 
     void WaitForSpace(std::unique_lock<std::mutex> &lock, size_t bytes)
     {
         const auto start = Clock::now();
+        ++m_producersWaiting;
+        // Hysteresis: once full, wait for the low watermark (or an empty queue), not for one free slot.
         m_notFull.wait(lock, [this, bytes]
-                       { return !MustWaitForSpace(bytes); });
+                       { return m_itemsTotal == 0u || m_bytes + bytes <= m_resumeBytes; });
+        --m_producersWaiting;
         const double ms = ElapsedMs(start);
         ++m_stats.producerWaits;
         m_stats.producerWaitMs += ms;
@@ -142,13 +159,18 @@ private:
     }
 
     const size_t m_capacityBytes;
+    const size_t m_resumeBytes;
     std::mutex m_mutex;
     std::condition_variable m_notEmpty;
     std::condition_variable m_notFull;
     std::condition_variable m_completed;
-    std::deque<Slot> m_items;
-    size_t m_bytes = 0;
+    Batch m_items;
+    size_t m_bytes = 0;      // queued + executing, not yet released
+    size_t m_itemsTotal = 0; // same, in items
     uint64_t m_lastTicket = 0;
     uint64_t m_completedTicket = 0;
+    unsigned m_producersWaiting = 0;
+    unsigned m_completeWaiters = 0;
+    bool m_consumerWaiting = false;
     Stats m_stats{};
 };

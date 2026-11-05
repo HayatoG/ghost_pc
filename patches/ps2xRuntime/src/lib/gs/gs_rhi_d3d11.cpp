@@ -16,6 +16,8 @@ namespace gs_rhi
         {
         case Format::RGBA8:
             return "RGBA8";
+        case Format::R32U:
+            return "R32U";
         }
         return "?";
     }
@@ -30,7 +32,7 @@ namespace gs_rhi
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include <d3d11.h>
+#include <d3d11_3.h>
 #include <d3dcompiler.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
@@ -135,8 +137,38 @@ float4 PSMain(VSOut i) : SV_Target
             {
             case Format::RGBA8:
                 return DXGI_FORMAT_R8G8B8A8_UNORM;
+            case Format::R32U:
+                return DXGI_FORMAT_R32_UINT;
             }
             return DXGI_FORMAT_UNKNOWN;
+        }
+
+        uint32_t BytesPerTexel(Format format)
+        {
+            switch (format)
+            {
+            case Format::RGBA8:
+            case Format::R32U:
+                return 4u;
+            }
+            return 4u;
+        }
+
+        bool CompileSource(const char *source, size_t sourceSize, const char *name, const char *entry, const char *target,
+                           const D3D_SHADER_MACRO *macros, ComPtr<ID3DBlob> &out, std::string &error)
+        {
+            ComPtr<ID3DBlob> errors;
+            const UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3;
+            const HRESULT hr = D3DCompile(source, sourceSize, name, macros, nullptr, entry, target, flags, 0,
+                                          out.GetAddressOf(), errors.GetAddressOf());
+            if (FAILED(hr))
+            {
+                error = std::string("D3DCompile ") + name + ":" + entry + " failed " + HrText(hr);
+                if (errors)
+                    error += ": " + std::string(static_cast<const char *>(errors->GetBufferPointer()), errors->GetBufferSize());
+                return false;
+            }
+            return true;
         }
 
         bool CompileShader(const char *entry, const char *target, ComPtr<ID3DBlob> &out, std::string &error)
@@ -166,6 +198,26 @@ float4 PSMain(VSOut i) : SV_Target
             ComPtr<ID3D11Texture2D> texture;
             ComPtr<ID3D11ShaderResourceView> srv;
             ComPtr<ID3D11RenderTargetView> rtv;
+            ComPtr<ID3D11UnorderedAccessView> uav;
+        };
+
+        class D3D11Buffer final : public Buffer
+        {
+        public:
+            uint32_t Size() const override { return desc.size; }
+
+            BufferDesc desc{};
+            ComPtr<ID3D11Buffer> buffer;
+            ComPtr<ID3D11ShaderResourceView> srv;
+            ComPtr<ID3D11UnorderedAccessView> uav;
+        };
+
+        class D3D11Program final : public Program
+        {
+        public:
+            ComPtr<ID3D11VertexShader> vs;
+            ComPtr<ID3D11PixelShader> ps;
+            ComPtr<ID3D11ComputeShader> cs;
         };
 
         class D3D11Device final : public Device
@@ -176,6 +228,7 @@ float4 PSMain(VSOut i) : SV_Target
             bool Create(const DeviceConfig &config, std::string &error);
 
             const AdapterInfo &Info() const override { return m_info; }
+            const Capabilities &Caps() const override { return m_caps; }
             std::unique_ptr<Texture> CreateTexture(const TextureDesc &desc) override;
             bool UpdateTexture(Texture &texture, const void *data, uint32_t rowPitch) override;
             bool ReadbackTexture(Texture &texture, void *dst, uint32_t dstRowPitch) override;
@@ -183,7 +236,28 @@ float4 PSMain(VSOut i) : SV_Target
             void WaitIdle() override;
             bool PumpEvents() override;
 
+            std::unique_ptr<Buffer> CreateBuffer(const BufferDesc &desc, const void *initialData) override;
+            bool UpdateBuffer(Buffer &buffer, uint32_t offset, const void *data, uint32_t size) override;
+            bool WriteDynamicBuffer(Buffer &buffer, uint32_t offset, const void *data, uint32_t size, bool discard) override;
+            bool CopyBuffer(Buffer &dst, uint32_t dstOffset, Buffer &src, uint32_t srcOffset, uint32_t size) override;
+            bool ReadBuffer(Buffer &src, const ByteRange *ranges, size_t rangeCount, void *dstBase) override;
+            std::unique_ptr<Program> CreateProgram(const ProgramDesc &desc, std::string &error) override;
+            bool DrawProcedural(Program &program, const Bindings &bindings, uint32_t viewportWidth,
+                                uint32_t viewportHeight, uint32_t vertexCount, uint32_t firstVertex) override;
+            bool Dispatch(Program &program, const Bindings &bindings, uint32_t groupsX, uint32_t groupsY,
+                          uint32_t groupsZ) override;
+            void Submit() override;
+
         private:
+            void QueryCapabilities();
+            void CollectShaderResources(const Bindings &bindings, ID3D11ShaderResourceView **out) const;
+            void CollectUnorderedViews(const Bindings &bindings, ID3D11UnorderedAccessView **out) const;
+            bool EnsureReadbackStaging(uint32_t size);
+
+            Capabilities m_caps{};
+            ComPtr<ID3D11Buffer> m_readbackStaging;
+            uint32_t m_readbackStagingSize = 0;
+            ComPtr<ID3D11RasterizerState> m_proceduralRasterizer;
             static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
             bool CreateOutputWindow(const DeviceConfig &config, std::string &error);
             bool CreateDeviceAndSwapchain(const DeviceConfig &config, std::string &error);
@@ -276,7 +350,8 @@ float4 PSMain(VSOut i) : SV_Target
                 return false;
             }
             SetWindowLongPtrW(m_hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
-            ShowWindow(m_hwnd, SW_SHOWNOACTIVATE);
+            if (config.showWindow)
+                ShowWindow(m_hwnd, SW_SHOWNOACTIVATE);
             return true;
         }
 
@@ -388,8 +463,316 @@ float4 PSMain(VSOut i) : SV_Target
         bool D3D11Device::Create(const DeviceConfig &config, std::string &error)
         {
             m_vsync = config.vsync;
-            return CreateOutputWindow(config, error) && CreateDeviceAndSwapchain(config, error) &&
-                   CreateBlitPipeline(config, error);
+            if (!CreateOutputWindow(config, error) || !CreateDeviceAndSwapchain(config, error) ||
+                !CreateBlitPipeline(config, error))
+                return false;
+            QueryCapabilities();
+            D3D11_RASTERIZER_DESC rd{};
+            rd.FillMode = D3D11_FILL_SOLID;
+            rd.CullMode = D3D11_CULL_NONE;
+            rd.DepthClipEnable = FALSE;
+            if (FAILED(m_device->CreateRasterizerState(&rd, m_proceduralRasterizer.GetAddressOf())))
+            {
+                error = "procedural rasterizer state creation failed";
+                return false;
+            }
+            return true;
+        }
+
+        void D3D11Device::QueryCapabilities()
+        {
+            D3D11_FEATURE_DATA_D3D11_OPTIONS2 options2{};
+            if (SUCCEEDED(m_device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS2, &options2, sizeof(options2))))
+                m_caps.rasterOrderedViews = options2.ROVsSupported != FALSE;
+            // Doubles plus the D3D11.1 extensions (fma, double <-> uint conversion).
+            D3D11_FEATURE_DATA_DOUBLES doubles{};
+            D3D11_FEATURE_DATA_D3D11_OPTIONS options{};
+            if (SUCCEEDED(m_device->CheckFeatureSupport(D3D11_FEATURE_DOUBLES, &doubles, sizeof(doubles))) &&
+                SUCCEEDED(m_device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS, &options, sizeof(options))))
+                m_caps.doubles = doubles.DoublePrecisionFloatShaderOps != FALSE && options.ExtendedDoublesShaderInstructions != FALSE;
+        }
+
+        std::unique_ptr<Buffer> D3D11Device::CreateBuffer(const BufferDesc &desc, const void *initialData)
+        {
+            const bool structured = (desc.usage & BufferShaderStructured) != 0u;
+            const bool raw = (desc.usage & (BufferShaderRaw | BufferUnorderedRaw)) != 0u;
+            const bool dynamic = (desc.usage & BufferDynamic) != 0u;
+            if (desc.size == 0u || (desc.size & 3u) != 0u || (structured && raw) ||
+                (structured && (desc.structureStride == 0u || desc.size % desc.structureStride != 0u)) ||
+                (dynamic && (desc.usage & BufferUnorderedRaw) != 0u))
+            {
+                std::cerr << "[gs-rhi] invalid buffer desc size=" << desc.size << " usage=" << desc.usage << std::endl;
+                return nullptr;
+            }
+
+            auto buf = std::make_unique<D3D11Buffer>();
+            buf->desc = desc;
+            D3D11_BUFFER_DESC bd{};
+            bd.ByteWidth = desc.size;
+            bd.Usage = dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT;
+            bd.CPUAccessFlags = dynamic ? D3D11_CPU_ACCESS_WRITE : 0u;
+            if ((desc.usage & (BufferShaderRaw | BufferShaderStructured)) != 0u)
+                bd.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
+            if ((desc.usage & BufferUnorderedRaw) != 0u)
+                bd.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+            if (structured)
+            {
+                bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+                bd.StructureByteStride = desc.structureStride;
+            }
+            else if (raw)
+            {
+                bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
+            }
+
+            D3D11_SUBRESOURCE_DATA init{};
+            init.pSysMem = initialData;
+            HRESULT hr = m_device->CreateBuffer(&bd, initialData ? &init : nullptr, buf->buffer.GetAddressOf());
+            if (SUCCEEDED(hr) && (bd.BindFlags & D3D11_BIND_SHADER_RESOURCE) != 0u)
+            {
+                D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
+                sd.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
+                if (structured)
+                {
+                    sd.Format = DXGI_FORMAT_UNKNOWN;
+                    sd.BufferEx.NumElements = desc.size / desc.structureStride;
+                }
+                else
+                {
+                    sd.Format = DXGI_FORMAT_R32_TYPELESS;
+                    sd.BufferEx.NumElements = desc.size / 4u;
+                    sd.BufferEx.Flags = D3D11_BUFFEREX_SRV_FLAG_RAW;
+                }
+                hr = m_device->CreateShaderResourceView(buf->buffer.Get(), &sd, buf->srv.GetAddressOf());
+            }
+            if (SUCCEEDED(hr) && (bd.BindFlags & D3D11_BIND_UNORDERED_ACCESS) != 0u)
+            {
+                D3D11_UNORDERED_ACCESS_VIEW_DESC ud{};
+                ud.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+                ud.Format = DXGI_FORMAT_R32_TYPELESS;
+                ud.Buffer.NumElements = desc.size / 4u;
+                ud.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+                hr = m_device->CreateUnorderedAccessView(buf->buffer.Get(), &ud, buf->uav.GetAddressOf());
+            }
+            if (FAILED(hr))
+            {
+                std::cerr << "[gs-rhi] CreateBuffer size=" << desc.size << " failed " << HrText(hr) << std::endl;
+                return nullptr;
+            }
+            return buf;
+        }
+
+        bool D3D11Device::UpdateBuffer(Buffer &buffer, uint32_t offset, const void *data, uint32_t size)
+        {
+            auto &buf = static_cast<D3D11Buffer &>(buffer);
+            if (!data || size == 0u || offset + size > buf.desc.size || (buf.desc.usage & BufferDynamic) != 0u)
+                return false;
+            const D3D11_BOX box{offset, 0u, 0u, offset + size, 1u, 1u};
+            m_context->UpdateSubresource(buf.buffer.Get(), 0, &box, data, 0, 0);
+            return true;
+        }
+
+        bool D3D11Device::WriteDynamicBuffer(Buffer &buffer, uint32_t offset, const void *data, uint32_t size, bool discard)
+        {
+            auto &buf = static_cast<D3D11Buffer &>(buffer);
+            if (!data || size == 0u || offset + size > buf.desc.size || (buf.desc.usage & BufferDynamic) == 0u)
+                return false;
+            D3D11_MAPPED_SUBRESOURCE mapped{};
+            const HRESULT hr = m_context->Map(buf.buffer.Get(), 0, discard ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE_NO_OVERWRITE,
+                                              0, &mapped);
+            if (FAILED(hr))
+            {
+                std::cerr << "[gs-rhi] Map(dynamic buffer) failed " << HrText(hr) << std::endl;
+                return false;
+            }
+            std::memcpy(static_cast<uint8_t *>(mapped.pData) + offset, data, size);
+            m_context->Unmap(buf.buffer.Get(), 0);
+            return true;
+        }
+
+        bool D3D11Device::CopyBuffer(Buffer &dst, uint32_t dstOffset, Buffer &src, uint32_t srcOffset, uint32_t size)
+        {
+            auto &d = static_cast<D3D11Buffer &>(dst);
+            auto &s = static_cast<D3D11Buffer &>(src);
+            if (&d == &s || size == 0u || dstOffset + size > d.desc.size || srcOffset + size > s.desc.size)
+                return false;
+            const D3D11_BOX box{srcOffset, 0u, 0u, srcOffset + size, 1u, 1u};
+            m_context->CopySubresourceRegion(d.buffer.Get(), 0, dstOffset, 0, 0, s.buffer.Get(), 0, &box);
+            return true;
+        }
+
+        bool D3D11Device::EnsureReadbackStaging(uint32_t size)
+        {
+            if (m_readbackStaging && m_readbackStagingSize >= size)
+                return true;
+            D3D11_BUFFER_DESC bd{};
+            bd.ByteWidth = size;
+            bd.Usage = D3D11_USAGE_STAGING;
+            bd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            m_readbackStaging.Reset();
+            if (FAILED(m_device->CreateBuffer(&bd, nullptr, m_readbackStaging.GetAddressOf())))
+            {
+                m_readbackStagingSize = 0;
+                return false;
+            }
+            m_readbackStagingSize = size;
+            return true;
+        }
+
+        bool D3D11Device::ReadBuffer(Buffer &src, const ByteRange *ranges, size_t rangeCount, void *dstBase)
+        {
+            auto &s = static_cast<D3D11Buffer &>(src);
+            if (!dstBase || rangeCount == 0u || !EnsureReadbackStaging(s.desc.size))
+                return false;
+            for (size_t i = 0; i < rangeCount; ++i)
+            {
+                const ByteRange &r = ranges[i];
+                if (r.size == 0u || r.offset + r.size > s.desc.size)
+                    return false;
+                const D3D11_BOX box{r.offset, 0u, 0u, r.offset + r.size, 1u, 1u};
+                m_context->CopySubresourceRegion(m_readbackStaging.Get(), 0, r.offset, 0, 0, s.buffer.Get(), 0, &box);
+            }
+            D3D11_MAPPED_SUBRESOURCE mapped{};
+            const HRESULT hr = m_context->Map(m_readbackStaging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+            if (FAILED(hr))
+            {
+                std::cerr << "[gs-rhi] Map(readback) failed " << HrText(hr) << std::endl;
+                return false;
+            }
+            for (size_t i = 0; i < rangeCount; ++i)
+                std::memcpy(static_cast<uint8_t *>(dstBase) + ranges[i].offset,
+                            static_cast<const uint8_t *>(mapped.pData) + ranges[i].offset, ranges[i].size);
+            m_context->Unmap(m_readbackStaging.Get(), 0);
+            return true;
+        }
+
+        std::unique_ptr<Program> D3D11Device::CreateProgram(const ProgramDesc &desc, std::string &error)
+        {
+            if (!desc.source)
+            {
+                error = "program " + desc.name + " has no source";
+                return nullptr;
+            }
+            std::vector<D3D_SHADER_MACRO> macros;
+            for (const auto &define : desc.defines)
+                macros.push_back({define.first.c_str(), define.second.c_str()});
+            macros.push_back({nullptr, nullptr});
+            const size_t sourceSize = std::strlen(desc.source);
+
+            auto program = std::make_unique<D3D11Program>();
+            ComPtr<ID3DBlob> blob;
+            if (!desc.vsEntry.empty())
+            {
+                if (!CompileSource(desc.source, sourceSize, desc.name.c_str(), desc.vsEntry.c_str(), "vs_5_0", macros.data(), blob, error) ||
+                    FAILED(m_device->CreateVertexShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, program->vs.GetAddressOf())))
+                {
+                    if (error.empty())
+                        error = "CreateVertexShader failed for " + desc.name;
+                    return nullptr;
+                }
+            }
+            if (!desc.psEntry.empty())
+            {
+                blob.Reset();
+                if (!CompileSource(desc.source, sourceSize, desc.name.c_str(), desc.psEntry.c_str(), "ps_5_0", macros.data(), blob, error) ||
+                    FAILED(m_device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, program->ps.GetAddressOf())))
+                {
+                    if (error.empty())
+                        error = "CreatePixelShader failed for " + desc.name;
+                    return nullptr;
+                }
+            }
+            if (!desc.csEntry.empty())
+            {
+                blob.Reset();
+                if (!CompileSource(desc.source, sourceSize, desc.name.c_str(), desc.csEntry.c_str(), "cs_5_0", macros.data(), blob, error) ||
+                    FAILED(m_device->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, program->cs.GetAddressOf())))
+                {
+                    if (error.empty())
+                        error = "CreateComputeShader failed for " + desc.name;
+                    return nullptr;
+                }
+            }
+            return program;
+        }
+
+        void D3D11Device::CollectShaderResources(const Bindings &bindings, ID3D11ShaderResourceView **out) const
+        {
+            for (size_t i = 0; i < Bindings::kSlots; ++i)
+                out[i] = bindings.shaderBuffers[i] ? static_cast<D3D11Buffer *>(bindings.shaderBuffers[i])->srv.Get() : nullptr;
+        }
+
+        void D3D11Device::CollectUnorderedViews(const Bindings &bindings, ID3D11UnorderedAccessView **out) const
+        {
+            for (size_t i = 0; i < Bindings::kSlots; ++i)
+            {
+                out[i] = nullptr;
+                if (bindings.unorderedBuffers[i])
+                    out[i] = static_cast<D3D11Buffer *>(bindings.unorderedBuffers[i])->uav.Get();
+                else if (bindings.unorderedTextures[i])
+                    out[i] = static_cast<D3D11Texture *>(bindings.unorderedTextures[i])->uav.Get();
+            }
+        }
+
+        bool D3D11Device::DrawProcedural(Program &program, const Bindings &bindings, uint32_t viewportWidth,
+                                         uint32_t viewportHeight, uint32_t vertexCount, uint32_t firstVertex)
+        {
+            auto &p = static_cast<D3D11Program &>(program);
+            if (!p.vs || !p.ps || vertexCount == 0u || viewportWidth == 0u || viewportHeight == 0u)
+                return false;
+            ID3D11ShaderResourceView *srvs[Bindings::kSlots];
+            ID3D11UnorderedAccessView *uavs[Bindings::kSlots];
+            CollectShaderResources(bindings, srvs);
+            CollectUnorderedViews(bindings, uavs);
+
+            D3D11_VIEWPORT vp{};
+            vp.Width = static_cast<float>(viewportWidth);
+            vp.Height = static_cast<float>(viewportHeight);
+            vp.MaxDepth = 1.0f;
+            m_context->OMSetRenderTargetsAndUnorderedAccessViews(0, nullptr, nullptr, 0, static_cast<UINT>(Bindings::kSlots), uavs, nullptr);
+            m_context->RSSetViewports(1, &vp);
+            m_context->RSSetState(m_proceduralRasterizer.Get());
+            m_context->IASetInputLayout(nullptr);
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            m_context->VSSetShader(p.vs.Get(), nullptr, 0);
+            m_context->PSSetShader(p.ps.Get(), nullptr, 0);
+            m_context->VSSetShaderResources(0, static_cast<UINT>(Bindings::kSlots), srvs);
+            m_context->PSSetShaderResources(0, static_cast<UINT>(Bindings::kSlots), srvs);
+            m_context->Draw(vertexCount, firstVertex);
+
+            // Unbind so the same resources can be copied / used as other views afterwards.
+            ID3D11ShaderResourceView *nullSrvs[Bindings::kSlots]{};
+            ID3D11UnorderedAccessView *nullUavs[Bindings::kSlots]{};
+            m_context->VSSetShaderResources(0, static_cast<UINT>(Bindings::kSlots), nullSrvs);
+            m_context->PSSetShaderResources(0, static_cast<UINT>(Bindings::kSlots), nullSrvs);
+            m_context->OMSetRenderTargetsAndUnorderedAccessViews(0, nullptr, nullptr, 0, static_cast<UINT>(Bindings::kSlots), nullUavs, nullptr);
+            return true;
+        }
+
+        bool D3D11Device::Dispatch(Program &program, const Bindings &bindings, uint32_t groupsX, uint32_t groupsY,
+                                   uint32_t groupsZ)
+        {
+            auto &p = static_cast<D3D11Program &>(program);
+            if (!p.cs)
+                return false;
+            ID3D11ShaderResourceView *srvs[Bindings::kSlots];
+            ID3D11UnorderedAccessView *uavs[Bindings::kSlots];
+            CollectShaderResources(bindings, srvs);
+            CollectUnorderedViews(bindings, uavs);
+            m_context->CSSetShader(p.cs.Get(), nullptr, 0);
+            m_context->CSSetShaderResources(0, static_cast<UINT>(Bindings::kSlots), srvs);
+            m_context->CSSetUnorderedAccessViews(0, static_cast<UINT>(Bindings::kSlots), uavs, nullptr);
+            m_context->Dispatch(groupsX, groupsY, groupsZ);
+            ID3D11ShaderResourceView *nullSrvs[Bindings::kSlots]{};
+            ID3D11UnorderedAccessView *nullUavs[Bindings::kSlots]{};
+            m_context->CSSetShaderResources(0, static_cast<UINT>(Bindings::kSlots), nullSrvs);
+            m_context->CSSetUnorderedAccessViews(0, static_cast<UINT>(Bindings::kSlots), nullUavs, nullptr);
+            return true;
+        }
+
+        void D3D11Device::Submit()
+        {
+            m_context->Flush();
         }
 
         bool D3D11Device::CreateBackbufferView()
@@ -429,7 +812,8 @@ float4 PSMain(VSOut i) : SV_Target
         std::unique_ptr<Texture> D3D11Device::CreateTexture(const TextureDesc &desc)
         {
             if (desc.width == 0 || desc.height == 0 || desc.width > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
-                desc.height > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION || (desc.cpuWritable && desc.renderTarget))
+                desc.height > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+                (desc.cpuWritable && (desc.renderTarget || desc.unorderedAccess)))
             {
                 std::cerr << "[gs-rhi] invalid texture desc " << desc.width << "x" << desc.height << std::endl;
                 return nullptr;
@@ -445,13 +829,16 @@ float4 PSMain(VSOut i) : SV_Target
             td.Format = ToDxgi(desc.format);
             td.SampleDesc.Count = 1;
             td.Usage = desc.cpuWritable ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT;
-            td.BindFlags = D3D11_BIND_SHADER_RESOURCE | (desc.renderTarget ? D3D11_BIND_RENDER_TARGET : 0u);
+            td.BindFlags = D3D11_BIND_SHADER_RESOURCE | (desc.renderTarget ? D3D11_BIND_RENDER_TARGET : 0u) |
+                           (desc.unorderedAccess ? D3D11_BIND_UNORDERED_ACCESS : 0u);
             td.CPUAccessFlags = desc.cpuWritable ? D3D11_CPU_ACCESS_WRITE : 0u;
             HRESULT hr = m_device->CreateTexture2D(&td, nullptr, tex->texture.GetAddressOf());
             if (SUCCEEDED(hr))
                 hr = m_device->CreateShaderResourceView(tex->texture.Get(), nullptr, tex->srv.GetAddressOf());
             if (SUCCEEDED(hr) && desc.renderTarget)
                 hr = m_device->CreateRenderTargetView(tex->texture.Get(), nullptr, tex->rtv.GetAddressOf());
+            if (SUCCEEDED(hr) && desc.unorderedAccess)
+                hr = m_device->CreateUnorderedAccessView(tex->texture.Get(), nullptr, tex->uav.GetAddressOf());
             if (FAILED(hr))
             {
                 std::cerr << "[gs-rhi] CreateTexture " << desc.width << "x" << desc.height << " failed " << HrText(hr) << std::endl;
@@ -463,7 +850,7 @@ float4 PSMain(VSOut i) : SV_Target
         bool D3D11Device::UpdateTexture(Texture &texture, const void *data, uint32_t rowPitch)
         {
             auto &tex = static_cast<D3D11Texture &>(texture);
-            const uint32_t rowBytes = tex.desc.width * 4u;
+            const uint32_t rowBytes = tex.desc.width * BytesPerTexel(tex.desc.format);
             if (!data || rowPitch < rowBytes)
                 return false;
 
@@ -498,7 +885,7 @@ float4 PSMain(VSOut i) : SV_Target
         bool D3D11Device::ReadbackTexture(Texture &texture, void *dst, uint32_t dstRowPitch)
         {
             auto &tex = static_cast<D3D11Texture &>(texture);
-            const uint32_t rowBytes = tex.desc.width * 4u;
+            const uint32_t rowBytes = tex.desc.width * BytesPerTexel(tex.desc.format);
             if (!dst || dstRowPitch < rowBytes)
                 return false;
 
