@@ -6,6 +6,7 @@
 #include <iostream>
 #include <string>
 #include <utility>
+#include <xmmintrin.h>
 
 using namespace gs_thread;
 
@@ -56,7 +57,12 @@ namespace
     {
         GSRasterBackend &inner;
 
-        void operator()(SubmitCmd &c) const { inner.Submit(c.batch); }
+        void operator()(SubmitCmd &c) const
+        {
+            if (_mm_getcsr() != c.csr)
+                _mm_setcsr(c.csr); // same rounding/flush mode as the producer had (serial equivalence)
+            inner.Submit(c.batch);
+        }
         void operator()(LoadClutCmd &c) const { inner.LoadClut(c.tex0, c.texclut); }
         void operator()(BeginTransferCmd &c) const { inner.BeginTransfer(c.command); }
         void operator()(UploadImageCmd &c) const
@@ -211,7 +217,7 @@ void GSThreadedBackend::Initialize(uint8_t *vram, uint32_t vramSize)
 }
 
 void GSThreadedBackend::Reset() { Enqueue(ResetCmd{}); }
-void GSThreadedBackend::Submit(const GSPrimitiveBatch &batch) { Enqueue(SubmitCmd{batch}); }
+void GSThreadedBackend::Submit(const GSPrimitiveBatch &batch) { Enqueue(SubmitCmd{batch, _mm_getcsr()}); }
 
 void GSThreadedBackend::LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut)
 {

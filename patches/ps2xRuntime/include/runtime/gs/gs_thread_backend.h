@@ -38,6 +38,9 @@ namespace gs_thread
     struct SubmitCmd
     {
         GSPrimitiveBatch batch;
+        // Producer's MXCSR: PATH1 draws are submitted inside the VU1 run with round-toward-zero set,
+        // and the serial backend rasterizes with it (see docs/gs-bands.md).
+        uint32_t csr = 0;
     };
     struct LoadClutCmd
     {
