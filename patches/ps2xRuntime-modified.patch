@@ -3724,10 +3724,10 @@ index 1b2a6b6..a8578c6 100644
 +
 +#endif // PS2_RUNTIME_H
 diff --git a/ps2xRuntime/include/ps2_runtime_macros.h b/ps2xRuntime/include/ps2_runtime_macros.h
-index 3e7df5a..08b30e8 100644
+index 3e7df5a..46a1935 100644
 --- a/ps2xRuntime/include/ps2_runtime_macros.h
 +++ b/ps2xRuntime/include/ps2_runtime_macros.h
-@@ -12,7 +12,36 @@
+@@ -12,7 +12,69 @@
  #include <immintrin.h> // For SSE/AVX intrinsics
  #endif
  
@@ -3737,7 +3737,40 @@ index 3e7df5a..08b30e8 100644
 +// Flag-only equivalent of PCSX2 VUflags.cpp VU_MAC_UPDATE.
 +// dest uses x=8, y=4, z=2, w=1; inactive components clear all four flags.
 +// Inspect bits so signed zero and subnormals do not depend on host DAZ/FTZ.
++// Branchless SSE form, forced inline: the scalar loop below stayed out of line in the huge generated functions
++// (2.8 % of the game thread). Inlined, MSVC also drops the MAC stores that the next COP2 op overwrites.
++// Identical results to ps2_vu0_update_mac_ref (checked by tests/vu0_mac_test.cpp).
++// Set PS2X_VU0_MAC_SCALAR at build time to return to the reference loop.
++#if defined(_MSC_VER)
++#define PS2_VU0_FORCEINLINE __forceinline
++#else
++#define PS2_VU0_FORCEINLINE inline __attribute__((always_inline))
++#endif
++static inline void ps2_vu0_update_mac_ref(R5900Context *ctx, __m128 result, uint8_t dest);
++#if !defined(PS2X_VU0_MAC_SCALAR)
++static PS2_VU0_FORCEINLINE void ps2_vu0_update_mac(R5900Context *ctx, __m128 result, uint8_t dest)
++{
++    // Reverse lanes so that movemask bit i is component bit i (x=8 ... w=1).
++    const __m128i v = _mm_shuffle_epi32(_mm_castps_si128(result), _MM_SHUFFLE(0, 1, 2, 3));
++    const __m128i expMask = _mm_set1_epi32(0x7F800000);
++    const __m128i e = _mm_and_si128(v, expMask);
++    const __m128i zero = _mm_setzero_si128();
++    const uint32_t s = (uint32_t)_mm_movemask_ps(_mm_castsi128_ps(v));
++    const uint32_t z = (uint32_t)_mm_movemask_ps(_mm_castsi128_ps(_mm_cmpeq_epi32(e, zero)));
++    const uint32_t m0 = (uint32_t)_mm_movemask_ps(_mm_castsi128_ps(
++        _mm_cmpeq_epi32(_mm_and_si128(v, _mm_set1_epi32(0x7FFFFFFF)), zero)));
++    const uint32_t o = (uint32_t)_mm_movemask_ps(_mm_castsi128_ps(_mm_cmpeq_epi32(e, expMask)));
++    const uint32_t mac = z | (s << 4) | ((z & ~m0) << 8) | (o << 12);
++    ctx->vu0_mac_flags = mac & ((uint32_t)(dest & 0xFu) * 0x1111u);
++}
++#else
 +static inline void ps2_vu0_update_mac(R5900Context *ctx, __m128 result, uint8_t dest)
++{
++    ps2_vu0_update_mac_ref(ctx, result, dest);
++}
++#endif
++
++static inline void ps2_vu0_update_mac_ref(R5900Context *ctx, __m128 result, uint8_t dest)
 +{
 +    uint32_t lanes[4];
 +    std::memcpy(lanes, &result, sizeof(lanes));
@@ -3765,7 +3798,7 @@ index 3e7df5a..08b30e8 100644
  
  static inline int32_t Ps2ExtractEpi32(__m128i v, int index)
  {
-@@ -576,8 +605,9 @@ static inline void Ps2FastWrite128(uint8_t *rdram, uint32_t addr, __m128i value)
+@@ -576,8 +638,9 @@ static inline void Ps2FastWrite128(uint8_t *rdram, uint32_t addr, __m128i value)
          ? runtime->Load64(rdram, ctx, _addr)                  \
          : FAST_READ64(_addr); }())
  
@@ -3776,7 +3809,7 @@ index 3e7df5a..08b30e8 100644
      return PS2Runtime::isSpecialAddress(_addr)                \
          ? runtime->Load128(rdram, ctx, _addr)                 \
          : FAST_READ128(_addr); }())
-@@ -637,7 +667,7 @@ static inline void Ps2FastWrite128(uint8_t *rdram, uint32_t addr, __m128i value)
+@@ -637,7 +700,7 @@ static inline void Ps2FastWrite128(uint8_t *rdram, uint32_t addr, __m128i value)
  #define WRITE128(addr, val)                                                          \
      do                                                                               \
      {                                                                                \
@@ -3785,7 +3818,7 @@ index 3e7df5a..08b30e8 100644
          __m128i _value = (val);                                                      \
          if (PS2Runtime::isSpecialAddress(_addr))                                     \
              runtime->Store128(rdram, ctx, _addr, _value);                            \
-@@ -766,71 +796,206 @@ inline __m128i ps2_ppacb(__m128i rs, __m128i rt)
+@@ -766,71 +829,206 @@ inline __m128i ps2_ppacb(__m128i rs, __m128i rt)
  #define PS2_PPACB(a, b) ps2_ppacb((__m128i)(a), (__m128i)(b))
  
  // Packed Interleave (PINT)
@@ -3853,10 +3886,7 @@ index 3e7df5a..08b30e8 100644
 +    uint32_t lo[4];
 +    uint32_t hi[4];
 +};
- 
--    __m128i out;
--    std::memcpy(&out, result, sizeof(out));
--    return out;
++
 +template <typename Ctx>
 +inline Ps2HiLoWords ps2_load_hilo_words(const Ctx *ctx)
 +{
@@ -3879,15 +3909,18 @@ index 3e7df5a..08b30e8 100644
 +    ctx->lo1 = lo[1];
 +    ctx->hi = hi[0];
 +    ctx->hi1 = hi[1];
- }
++}
  
--inline __m128i _mm_custom_srlv_epi32(__m128i a, __m128i count)
+-    __m128i out;
+-    std::memcpy(&out, result, sizeof(out));
+-    return out;
 +inline __m128i ps2_hilo_even_words(const Ps2HiLoWords &words)
 +{
 +    return _mm_set_epi32(static_cast<int>(words.hi[2]), static_cast<int>(words.lo[2]),
 +                         static_cast<int>(words.hi[0]), static_cast<int>(words.lo[0]));
-+}
-+
+ }
+ 
+-inline __m128i _mm_custom_srlv_epi32(__m128i a, __m128i count)
 +enum class Ps2MmiMul
 +{
 +    Set,
@@ -3964,14 +3997,21 @@ index 3e7df5a..08b30e8 100644
 +}
 +
 +inline int64_t ps2_saturate_hilo_to_s32(uint32_t hi, uint32_t lo)
- {
--    return _mm_set1_epi64x(static_cast<long long>(value));
++{
 +    const int64_t value = static_cast<int64_t>((static_cast<uint64_t>(hi) << 32) | lo);
 +    if (value >= 0x7FFFFFFFLL)
 +        return 0x7FFFFFFFLL;
 +    if (value <= -0x80000000LL)
 +        return -0x80000000LL;
 +    return static_cast<int32_t>(lo);
++}
++
++template <typename Ctx>
++inline __m128i ps2_pmfhl_slw(const Ctx *ctx)
+ {
+-    return _mm_set1_epi64x(static_cast<long long>(value));
++    const Ps2HiLoWords w = ps2_load_hilo_words(ctx);
++    return _mm_set_epi64x(ps2_saturate_hilo_to_s32(w.hi[2], w.lo[2]), ps2_saturate_hilo_to_s32(w.hi[0], w.lo[0]));
  }
  
 -#define PS2_PMFHL_LW(hi, lo) _mm_unpacklo_epi64(ps2_u64_to_epi64_pair(lo), ps2_u64_to_epi64_pair(hi))
@@ -3979,13 +4019,6 @@ index 3e7df5a..08b30e8 100644
 -#define PS2_PMFHL_SLW(hi, lo) _mm_packs_epi32(ps2_u64_to_epi64_pair(lo), ps2_u64_to_epi64_pair(hi))
 -#define PS2_PMFHL_LH(hi, lo) _mm_shuffle_epi32(_mm_packs_epi32(ps2_u64_to_epi64_pair(lo), ps2_u64_to_epi64_pair(hi)), _MM_SHUFFLE(3, 1, 2, 0))
 -#define PS2_PMFHL_SH(hi, lo) _mm_shufflehi_epi16(_mm_shufflelo_epi16(_mm_packs_epi32(ps2_u64_to_epi64_pair(lo), ps2_u64_to_epi64_pair(hi)), _MM_SHUFFLE(3, 1, 2, 0)), _MM_SHUFFLE(3, 1, 2, 0))
-+template <typename Ctx>
-+inline __m128i ps2_pmfhl_slw(const Ctx *ctx)
-+{
-+    const Ps2HiLoWords w = ps2_load_hilo_words(ctx);
-+    return _mm_set_epi64x(ps2_saturate_hilo_to_s32(w.hi[2], w.lo[2]), ps2_saturate_hilo_to_s32(w.hi[0], w.lo[0]));
-+}
-+
 +// LH keeps the low halfword of LO0 LO1 HI0 HI1 LO2 LO3 HI2 HI3 (PCSX2 reads US[0] and US[2] of each 64-bit half).
 +template <typename Ctx>
 +inline __m128i ps2_pmfhl_lh(const Ctx *ctx)
@@ -4032,7 +4065,7 @@ index 3e7df5a..08b30e8 100644
  
  // FPU (COP1) operations
  #define FPU_SET_ACC(ctx, res) (ctx->f_acc = res)
-@@ -853,7 +1018,19 @@ inline __m128i ps2_u64_to_epi64_pair(uint64_t value)
+@@ -853,7 +1051,19 @@ inline __m128i ps2_u64_to_epi64_pair(uint64_t value)
  #define FPU_FLOOR_W_S(a) ((int32_t)floorf((float)(a)))
  #define FPU_CVT_S_W(a) ((float)(int32_t)(a))
  #define FPU_CVT_S_L(a) ((float)(int64_t)(a))
@@ -4053,7 +4086,7 @@ index 3e7df5a..08b30e8 100644
  #define FPU_CVT_L_S(a) ((int64_t)(float)(a))
  #define FPU_C_F_S(a, b) (0)
  #define FPU_C_UN_S(a, b) (isnan((float)(a)) || isnan((float)(b)))
-@@ -955,9 +1132,9 @@ inline __m128i ps2_qfsrv(__m128i rs, __m128i rt, uint32_t sa)
+@@ -955,9 +1165,9 @@ inline __m128i ps2_qfsrv(__m128i rs, __m128i rt, uint32_t sa)
  }
  #define PS2_QFSRV(rs, rt, sa) ps2_qfsrv((__m128i)(rs), (__m128i)(rt), (uint32_t)(sa))
  #define PS2_PCPYLD(rs, rt) _mm_unpacklo_epi64(rt, rs)
@@ -11651,7 +11684,7 @@ index 1029cee..f356921 100644
      {
          PixelStorageTraits<C32>::Write(PageTableC32, data, bp, bw, x, y, value);
 diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
-index db5cd08..8eb1805 100644
+index db5cd08..d5fa4bc 100644
 --- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 @@ -1,7 +1,13 @@
@@ -11785,7 +11818,8 @@ index db5cd08..8eb1805 100644
 -        if (handler.enabled && handler.cause == cause && handler.handler != 0u &&
 -            m_runtime.hasFunction(handler.handler))
 +        if (!handler.enabled || handler.cause != cause || handler.handler == 0u)
-+        {
+         {
+-            matching.push_back(handler);
 +            continue;
 +        }
 +        if (!m_runtime.hasFunction(handler.handler))
@@ -11808,24 +11842,36 @@ index db5cd08..8eb1805 100644
 +            ++irqStats.latched;
 +        }
 +        else
-         {
--            matching.push_back(handler);
++        {
 +            irqStats.pendingMask.fetch_and(~(1u << cause), std::memory_order_relaxed);
          }
      }
      std::sort(matching.begin(), matching.end(), [](const EeIrqHandler &left, const EeIrqHandler &right)
-@@ -1798,7 +1872,9 @@ void EeScheduler::processDueDeadlines()
+@@ -1798,7 +1872,22 @@ void EeScheduler::processDueDeadlines()
                  return;
              }
  
 -            if (now < pacingDeadline)
 +            // PS2X_GUEST_CLOCK_ONLY: guest cycles alone decide; never wait for host time.
-+            const bool guestClockOnly = ps2_guest_clock::guestClockOnly();
++            // Host behind real time (a VBlankStart is already overdue in host time): sleeping for any other
++            // host deadline would only slow the game further, so treat host deadlines as reached.
++            bool guestClockOnly = ps2_guest_clock::guestClockOnly();
++            if (!guestClockOnly)
++            {
++                for (const ScheduledEvent &item : m_deadlines)
++                {
++                    if (item.event.type == EeEventType::VBlankStart && item.hostDeadline <= now)
++                    {
++                        guestClockOnly = true;
++                        break;
++                    }
++                }
++            }
 +            if (!guestClockOnly && now < pacingDeadline)
              {
                  m_eventCv.wait_until(lock, pacingDeadline, [this]()
                                       { return !m_events.empty() ||
-@@ -1812,9 +1888,9 @@ void EeScheduler::processDueDeadlines()
+@@ -1812,9 +1901,9 @@ void EeScheduler::processDueDeadlines()
  
              const auto pacedNow = std::chrono::steady_clock::now();
              auto firstFuture = std::partition(m_deadlines.begin(), m_deadlines.end(),
@@ -11837,7 +11883,7 @@ index db5cd08..8eb1805 100644
              due.insert(due.end(),
                         std::make_move_iterator(m_deadlines.begin()),
                         std::make_move_iterator(firstFuture));
-@@ -1850,8 +1926,8 @@ void EeScheduler::processDueDeadlines()
+@@ -1850,8 +1939,8 @@ void EeScheduler::processDueDeadlines()
                  scheduleEvent(scheduled.deadlineCycle + kVBlankDurationCycles,
                                scheduled.hostDeadline + kVBlankDuration,
                                EeEvent{EeEventType::VBlankEnd, 0, m_vsyncTick + 1u});
@@ -11848,7 +11894,7 @@ index db5cd08..8eb1805 100644
                                EeEvent{EeEventType::VBlankStart, 0, 0});
              }
              processEvent(scheduled.event);
-@@ -1869,6 +1945,20 @@ void EeScheduler::processEvent(const EeEvent &event)
+@@ -1869,6 +1958,20 @@ void EeScheduler::processEvent(const EeEvent &event)
      case EeEventType::VBlankStart:
          ++m_vsyncTick;
          m_runtime.memory().gs().vsyncTick.store(m_vsyncTick, std::memory_order_release);
@@ -11869,7 +11915,7 @@ index db5cd08..8eb1805 100644
          if ((m_vsyncTick & 1u) != 0u)
          {
              m_runtime.memory().gs().csr.fetch_or(0x2000ull, std::memory_order_acq_rel);
-@@ -1901,6 +1991,8 @@ void EeScheduler::processEvent(const EeEvent &event)
+@@ -1901,6 +2004,8 @@ void EeScheduler::processEvent(const EeEvent &event)
              queueInvocation(std::move(invocation));
          }
          dispatchIrq(false, 2u);
@@ -11878,25 +11924,52 @@ index db5cd08..8eb1805 100644
          break;
      case EeEventType::ExternalWake:
          completeExternalWait(event.id, event.value, KE_OK);
-@@ -2029,14 +2121,20 @@ void EeScheduler::waitForEvent()
+@@ -2026,17 +2131,46 @@ void EeScheduler::waitForEvent()
+         deadlineCycle = next->deadlineCycle;
+         hostDeadline = next->hostDeadline;
+     }
++    // Host behind real time (a VBlankStart overdue in host time): do not sleep, jump in guest cycles.
++    bool skipIdle = ps2_guest_clock::guestClockOnly();
++    const bool guestOnlyMode = skipIdle;
++    if (!skipIdle)
++    {
++        const auto nowHost = std::chrono::steady_clock::now();
++        for (const ScheduledEvent &item : m_deadlines)
++        {
++            if (item.event.type == EeEventType::VBlankStart && item.hostDeadline <= nowHost)
++            {
++                skipIdle = true;
++                break;
++            }
++        }
++    }
      if (hasTimerDeadline)
      {
-         const auto timerHostDeadline = std::chrono::steady_clock::now() + eeCyclesToHostDuration(timerCycles);
+-        const auto timerHostDeadline = std::chrono::steady_clock::now() + eeCyclesToHostDuration(timerCycles);
 -        if (timerHostDeadline < hostDeadline)
-+        // PS2X_GUEST_CLOCK_ONLY: pick the earlier deadline in guest cycles (host time points are meaningless there).
-+        const bool timerFirst = ps2_guest_clock::guestClockOnly()
-+                                    ? (m_deadlines.empty() || m_eeCycle + timerCycles < deadlineCycle)
-+                                    : timerHostDeadline < hostDeadline;
++        // PS2X_GUEST_CLOCK_ONLY / behind: pick the earlier deadline in guest cycles (host time points are meaningless).
++        std::chrono::steady_clock::time_point timerHostDeadline{};
++        bool timerFirst;
++        if (skipIdle)
++        {
++            timerFirst = m_deadlines.empty() || m_eeCycle + timerCycles < deadlineCycle;
++        }
++        else
++        {
++            timerHostDeadline = std::chrono::steady_clock::now() + eeCyclesToHostDuration(timerCycles);
++            timerFirst = timerHostDeadline < hostDeadline;
++        }
 +        if (timerFirst)
          {
              deadlineCycle = m_eeCycle + timerCycles;
              hostDeadline = timerHostDeadline;
          }
      }
++    (void)guestOnlyMode;
  
 -    const bool signaled = m_eventCv.wait_until(lock, hostDeadline, [this]()
-+    // PS2X_GUEST_CLOCK_ONLY: idle time is skipped at once (jump to the next guest deadline).
-+    const bool signaled = !ps2_guest_clock::guestClockOnly() &&
++    // PS2X_GUEST_CLOCK_ONLY / host behind: idle time is skipped at once (jump to the next guest deadline).
++    const bool signaled = !skipIdle &&
 +                          m_eventCv.wait_until(lock, hostDeadline, [this]()
                                                 { return !m_events.empty() ||
                                                          m_stopRequested.load(std::memory_order_acquire); });
@@ -17650,10 +17723,10 @@ index 95126cc..264c813 100644
      {
          std::lock_guard<std::mutex> lock(m_hostFileMutex);
 diff --git a/ps2xRuntime/src/lib/ps2_memory.cpp b/ps2xRuntime/src/lib/ps2_memory.cpp
-index 0ce4bb4..4302682 100644
+index 0ce4bb4..04254ba 100644
 --- a/ps2xRuntime/src/lib/ps2_memory.cpp
 +++ b/ps2xRuntime/src/lib/ps2_memory.cpp
-@@ -1,2544 +1,2638 @@
+@@ -1,2544 +1,2651 @@
 -#include "runtime/ps2_memory.h"
 -#include "runtime/ps2_address.h"
 -#include "runtime/gs/gs_frontend.h"
@@ -20210,6 +20283,9 @@ index 0ce4bb4..4302682 100644
 +#include <algorithm>
 +#include <string>
 +#include <vector>
++static uint32_t *s_gifStatSlot = nullptr;
++static const void *s_gifStatOwner = nullptr;
++
 +
 +namespace
 +{
@@ -20556,6 +20632,7 @@ index 0ce4bb4..4302682 100644
 +
 +        // Initialize I/O registers
 +        m_ioRegisters.clear();
++        s_gifStatOwner = nullptr;
 +
 +        // Initialize GS registers
 +        memset(&gs_regs, 0, sizeof(gs_regs));
@@ -20614,9 +20691,18 @@ index 0ce4bb4..4302682 100644
 +
 +    constexpr uint32_t kGifStat = 0x10003020u;
 +    constexpr uint32_t kGifFqcMask = 0x1F000000u;
-+    auto gifStatIt = m_ioRegisters.find(kGifStat);
-+    if (gifStatIt != m_ioRegisters.end())
-+        gifStatIt->second &= ~kGifFqcMask;
++    // Cache the GIF_STAT slot (unordered_map nodes are stable; invalidated when the map is cleared in init).
++    if (s_gifStatOwner != this)
++    {
++        auto gifStatIt = m_ioRegisters.find(kGifStat);
++        if (gifStatIt != m_ioRegisters.end())
++        {
++            s_gifStatSlot = &gifStatIt->second;
++            s_gifStatOwner = this;
++        }
++    }
++    if (s_gifStatOwner == this)
++        *s_gifStatSlot &= ~kGifFqcMask;
 +
 +    uint32_t interruptMask = 0u;
 +    for (size_t index = 0; index < m_eeTimers.size(); ++index)

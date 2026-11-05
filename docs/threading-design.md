@@ -486,6 +486,16 @@ de CSR no código gerado (`entry_002a2e4c`, `entry_002a2ee0/ef8`) são entradas 
 - O executável testado é uma cópia em `work/thr_exe/` (para não travar o link do `build_perf`, que outros agentes
   rodam); o `build_perf` tem o mesmo código.
 
+## 10.6 Etapa 3 para o backend hw (05/11 ~04:15): `PS2X_GS=hw-thread`
+
+A etapa 3 (GS fora da thread do jogo) foi feita para o GS por hardware reaproveitando o `GSThreadedBackend` do `cpu-thread`
+(fila de 32 MiB com histerese/lote; `Present` e leituras do guest esperam a fila esvaziar até eles; `Sync(Finish)` e a leitura
+de CSR não esperam). O `GSHwBackend` inteiro (preparo de primitivas, vértices, upload/espelho, chamadas D3D11, janela e
+`Present`) roda na thread de GS, dona única do device/immediate context. Detalhes e números: `gs-hw-backend.md` 5.4.
+Os pontos de sincronização desta seção (CSR uma vez por quadro sem espera; `shot`/`Present` como entrada da FIFO) se
+confirmaram na prática: os `shot` do `regress_scene3d` saíram byte-idênticos (mesmo md5) entre `hw` e `hw-thread`.
+Ainda não feito: VU1 em thread própria (etapas 4+), e o oráculo `PS2X_GUEST_CLOCK_ONLY` + `PS2X_GS_STREAM_HASH` para o hw.
+
 ## 11. Fontes consultadas
 
 - Código do runtime em `work/ps2recomp_game/ps2xRuntime` (base PS2Recomp, GPL-3.0), só leitura.

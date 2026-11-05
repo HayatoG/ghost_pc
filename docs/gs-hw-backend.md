@@ -238,6 +238,30 @@ O que **não** foi feito (decisão, com o porquê):
   backend). Com o padrão (`PS2X_TARGET_FPS` ausente = 60) ele já dorme; nas medições de benchmark ele continua roubando ~60 %
   de um núcleo. Pendência registrada na seção 8.
 
+### 5.4 GS por hardware em thread própria (`PS2X_GS=hw-thread`, 05/11 ~04:00)
+
+Objetivo: tirar da thread do jogo o lado CPU do backend hw (perfil `gameplay-profile-hw2-2026-11-05.md`: `GSHwBackend` +
+D3D11 7,5 %, espelho/upload 6,0 %, driver D3D11 1,5 % da thread do jogo, ~5,5 ms por vsync somados; teto estimado se
+zerados: ~22-23 vsync/s, porque VU1/guest/EE continuam seriais).
+
+Implementação (só `gs_backend_factory.cpp`): `PS2X_GS=hw-thread` = o mesmo `GSHwBackend` (mesmas opções de `hw`) dentro do
+`GSThreadedBackend` já usado por `cpu-thread` (fila de 32 MiB com histerese e consumo em lote, `PS2X_GS_QUEUE_KB`;
+`bands=0`, sem rasterizador em faixas). `PS2X_GS=hw` não mudou.
+- **Dono único do D3D11**: a thread de GS é a única que chama o backend depois da construção; o device, o immediate context
+  e a janela do renderer nascem no `EnsureDeviceLocked` (primeiro draw / `Initialize`, que roda por `RunOnGsThread`) e a
+  bomba de mensagens da janela roda no `Present` — tudo na mesma thread. Não há texturas compartilhadas: a apresentação é o
+  swapchain da janela do próprio renderer; a janela raylib do host só recebe o quadro de CPU (64×64 preto ou, com
+  `PS2X_GS_HW_CPUFRAME=N`, o composto) que `Present` devolve por valor.
+- **Ordem e coerência**: todo comando entra na FIFO na ordem do produtor. São síncronos (esperam a fila esvaziar até eles):
+  `Present` (thread da janela do host, uma vez por tick de vsync; o `shot` sai daí), `ConsumeLocalToHostBytes`, `ReadVram`,
+  `SnapshotVram`, `GetTransferSnapshot`, `Sync(Reset/LocalToHost/DebugReadback)`. `Sync(Finish)` não espera (o frontend já
+  marca CSR.FINISH; a leitura de CSR por quadro do jogo testa só FIELD, `threading-design.md` 10.3). `ClearFramebuffer`
+  responde na hora com a mesma regra do `GSCpuBackend` (o `GSHwBackend` devolve o resultado do `m_reference`, que é essa regra).
+- O MXCSR do produtor viaja com cada `Submit` (como em `cpu-thread`).
+- O `m_mutex` recursivo do `GSHwBackend` continua (agora sem disputa: um só chamador).
+
+Resultados: ver tabela abaixo (preenchida na medição desta rodada).
+
 ## 6. O que foi estudado do PCSX2 (regra 8)
 
 Rodada de otimização (5.3): nenhuma consulta à rede; as ideias (estado por primitiva para não quebrar lotes, FBMSK de bits

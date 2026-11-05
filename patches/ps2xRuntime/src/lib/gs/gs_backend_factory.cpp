@@ -103,6 +103,29 @@ namespace
                   << " cpu_frame_every=" << options.cpuFrameEvery << std::endl;
         return std::make_unique<GSHwBackend>(options);
     }
+
+    // PS2X_GS=hw-thread: the same GSHwBackend behind GSThreadedBackend. The guest/VU1 only enqueue GS
+    // commands (32 MiB FIFO, batched consumption); the GS thread is the only user of the backend, so the
+    // D3D11 device, its immediate context and its window (created on the first draw/Initialize, pumped in
+    // Present) all live on that thread. Reads by the guest (local->host, ReadVram, Sync Reset/LocalToHost)
+    // and Present (host window thread, once per vsync tick) wait for the queue to drain up to them, so the
+    // command order and the observed memory are the serial ones (docs/gs-hw-backend.md, section 5.4).
+    std::unique_ptr<GSRasterBackend> MakeThreadedHwBackend()
+    {
+        GSThreadedBackend::Options options{};
+        options.bands = 0u; // never banded: the inner backend is not a GSCpuBackend
+        const std::string queueKb = EnvLower("PS2X_GS_QUEUE_KB");
+        if (!queueKb.empty())
+        {
+            const unsigned long kb = std::strtoul(queueKb.c_str(), nullptr, 10);
+            if (kb != 0ul)
+                options.queueCapacityBytes = static_cast<size_t>(kb) << 10;
+        }
+        options.debugStats = EnvFlag("PS2X_GS_DEBUG");
+        std::cout << "[gs-thread] PS2X_GS=hw-thread: GSHwBackend on a dedicated GS thread, queue_kb="
+                  << (options.queueCapacityBytes >> 10) << " (PS2X_GS=hw-serial: guest thread)" << std::endl;
+        return std::make_unique<GSThreadedBackend>(MakeHwBackend(), options);
+    }
 #endif
 }
 
@@ -133,9 +156,21 @@ std::unique_ptr<GSRasterBackend> CreateGSRasterBackendFromEnv()
     }
     if (choice == "cpu-serial")
         return std::make_unique<GSCpuBackend>();
+    // cpu-thread now defaults to the banded rasterizer (PS2X_GS_BANDS=auto; =0 gives the plain GS thread):
+    // verifier-clean over the full scene3d run and ~1.65x the plain GS thread (docs/gs-bands.md).
     if (choice == "cpu-thread" || choice == "cpu-mt")
-        return MakeThreadedCpuBackend();
-    if (choice == "hw")
+        return MakeThreadedCpuBackend(GSBandedBackend::DefaultWorkers());
+    // PS2X_GS=hw (default since 05/11 ~04:20) and hw-thread: GSHwBackend on its own GS thread (+18-22 %
+    // vsync/s in the 3D scene, same shots); hw-serial: the old mode, GSHwBackend on the guest thread.
+    if (choice == "hw" || choice == "hw-thread")
+    {
+#if defined(PS2X_HAS_GS_GPU)
+        return MakeThreadedHwBackend();
+#else
+        std::cerr << "[gs-hw] PS2X_GS=hw-thread not built in; using cpu" << std::endl;
+#endif
+    }
+    else if (choice == "hw-serial")
     {
 #if defined(PS2X_HAS_GS_GPU)
         return MakeHwBackend();
