@@ -109,12 +109,28 @@ namespace
 std::unique_ptr<GSRasterBackend> CreateGSRasterBackendFromEnv()
 {
     const std::string choice = EnvLower("PS2X_GS");
-    // Default CPU path (PS2X_GS unset or "cpu"): GS thread + banded rasterizer with
-    // min(8, hardware threads - 4) workers (docs/gs-bands.md); byte-identical to the serial one.
-    // PS2X_GS=cpu-serial: the single-threaded GSCpuBackend on the guest thread (reference, PS2X_GS_RECORD).
-    // PS2X_GS=cpu-thread: GS thread without bands unless PS2X_GS_BANDS is set.
-    if (choice.empty() || choice == "cpu")
-        return MakeThreadedCpuBackend(GSBandedBackend::DefaultWorkers());
+    // PS2X_GS=cpu-serial (alias of cpu, the default): single-threaded GSCpuBackend on the guest thread.
+    // PS2X_GS=cpu-thread: GS thread; PS2X_GS_BANDS=N|auto adds the banded rasterizer (docs/gs-bands.md).
+    // Making cpu-thread + bands the default is pending one game measurement (docs/gs-bands.md).
+    if (choice == "cpu-bands")
+    {
+        // Banded rasterizer called directly from the guest thread (no GS thread): the same command
+        // stream and timing as the serial backend, drawn by PS2X_GS_BANDS workers (default auto).
+        GSBandedBackend::Config config;
+        const std::string bands = EnvLower("PS2X_GS_BANDS");
+        config.workers = (bands.empty() || bands == "auto") ? GSBandedBackend::DefaultWorkers()
+                                                           : static_cast<unsigned>(std::strtoul(bands.c_str(), nullptr, 10));
+        const std::string rows = EnvLower("PS2X_GS_BAND_ROWS");
+        if (!rows.empty())
+            config.stripeRows = static_cast<uint32_t>(std::strtoul(rows.c_str(), nullptr, 10));
+        const std::string verify = EnvLower("PS2X_GS_BANDS_VERIFY");
+        config.verify = !verify.empty() && verify != "0";
+        config.verifyStrict = verify == "2";
+        config.threadSafe = true;
+        std::cout << "[gs-bands] PS2X_GS=cpu-bands: workers=" << config.workers << " stripe_rows=" << config.stripeRows
+                  << " verify=" << (config.verify ? 1 : 0) << std::endl;
+        return std::make_unique<GSBandedBackend>(std::make_unique<GSCpuBackend>(), config);
+    }
     if (choice == "cpu-serial")
         return std::make_unique<GSCpuBackend>();
     if (choice == "cpu-thread" || choice == "cpu-mt")

@@ -45,6 +45,9 @@ public:
         // command stream; at every Present the two VRAMs are compared and mismatches are logged.
         bool verify = false;
         bool verifyStrict = false; // also compare after every draw (serializes the workers: hides races)
+        // Lock every public call (PS2X_GS=cpu-bands: called directly from the guest and window threads
+        // instead of from the single GS thread of GSThreadedBackend).
+        bool threadSafe = false;
     };
 
     // Default worker count: min(8, hardware threads - 4), at least 2.
@@ -125,6 +128,12 @@ private:
 
     std::unique_ptr<GSRasterBackend> m_master;
     const Config m_config;
+    mutable std::recursive_mutex m_apiMutex;
+    std::unique_lock<std::recursive_mutex> LockApi() const
+    {
+        return m_config.threadSafe ? std::unique_lock<std::recursive_mutex>(m_apiMutex)
+                                   : std::unique_lock<std::recursive_mutex>();
+    }
     std::vector<std::unique_ptr<Worker>> m_workers;
 
     // Pass state (since the last barrier).
@@ -155,5 +164,6 @@ private:
     uint32_t m_vramSize = 0;
     uint64_t m_verifyChecks = 0;
     uint64_t m_verifyMismatches = 0;
+    uint64_t m_lastVsync = 0; // vsyncTick of the last Present (verify logs)
     void VerifyAgainstShadow(const GSPrimitiveBatch *draw = nullptr);
 };

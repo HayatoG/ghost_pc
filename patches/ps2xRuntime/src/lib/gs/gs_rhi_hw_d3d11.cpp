@@ -193,6 +193,7 @@ float4 PSMain(VSOut i) : SV_Target { return float4(gSource.Sample(gSampler, i.uv
             case VertexFormat::Float4: return DXGI_FORMAT_R32G32B32A32_FLOAT;
             case VertexFormat::UInt1: return DXGI_FORMAT_R32_UINT;
             case VertexFormat::UInt2: return DXGI_FORMAT_R32G32_UINT;
+            case VertexFormat::UInt4: return DXGI_FORMAT_R32G32B32A32_UINT;
             }
             return DXGI_FORMAT_UNKNOWN;
         }
@@ -283,6 +284,13 @@ float4 PSMain(VSOut i) : SV_Target { return float4(gSource.Sample(gSampler, i.uv
             ComPtr<ID3D11Buffer> m_constantRing; // needs D3D11.1 constant buffer offsets
             uint32_t m_constantCursor = 0;
             ComPtr<ID3D11Buffer> m_constantFallback; // when offsets are not supported
+            // Redundant-state filters for the draw path (each skipped call is a driver call less per batch)
+            ID3D11ShaderResourceView *m_psSrv[4] = {};
+            bool m_cbValid = false;
+            uint32_t m_cbLastSize = 0;
+            uint8_t m_cbLast[kMaxConstantBytes] = {};
+            bool m_scissorValid = false;
+            D3D11_RECT m_scissor{};
             ComPtr<ID3D11RasterizerState> m_rasterizer;
             ComPtr<ID3D11RasterizerState> m_rasterizerNoScissor;
             ComPtr<ID3D11SamplerState> m_pointClamp;
@@ -802,6 +810,7 @@ float4 PSMain(VSOut i) : SV_Target { return float4(gSource.Sample(gSampler, i.uv
             ID3D11ShaderResourceView *nullSrv[4] = {};
             ID3D11UnorderedAccessView *nullUav[2] = {};
             m_context->PSSetShaderResources(0, 4, nullSrv);
+            std::memset(m_psSrv, 0, sizeof(m_psSrv));
             m_context->VSSetShaderResources(0, 4, nullSrv);
             m_context->CSSetShaderResources(0, 4, nullSrv);
             m_context->CSSetUnorderedAccessViews(0, 2, nullUav, nullptr);
@@ -821,6 +830,7 @@ float4 PSMain(VSOut i) : SV_Target { return float4(gSource.Sample(gSampler, i.uv
                 {
                     m_constantCursor = 0;
                     mode = D3D11_MAP_WRITE_DISCARD;
+                    m_cbValid = false; // the ring was renamed: the bound draw constants are gone
                 }
                 D3D11_MAPPED_SUBRESOURCE m{};
                 if (FAILED(m_context->Map(m_constantRing.Get(), 0, mode, 0, &m)))
@@ -833,6 +843,7 @@ float4 PSMain(VSOut i) : SV_Target { return float4(gSource.Sample(gSampler, i.uv
                 m_constantCursor += aligned;
                 return true;
             }
+            m_cbValid = false; // single shared buffer: any write replaces the bound draw constants
             D3D11_MAPPED_SUBRESOURCE m{};
             if (FAILED(m_context->Map(m_constantFallback.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
                 return false;
@@ -891,6 +902,7 @@ float4 PSMain(VSOut i) : SV_Target { return float4(gSource.Sample(gSampler, i.uv
                 EndPass();
             ID3D11ShaderResourceView *nullSrv[4] = {};
             m_context->PSSetShaderResources(0, 4, nullSrv);
+            std::memset(m_psSrv, 0, sizeof(m_psSrv));
             m_context->VSSetShaderResources(0, 4, nullSrv);
             ID3D11RenderTargetView *rtv = color ? static_cast<HwSurface *>(color)->rtv.Get() : nullptr;
             ID3D11DepthStencilView *dsv = depth ? static_cast<HwSurface *>(depth)->dsv.Get() : nullptr;
@@ -901,6 +913,8 @@ float4 PSMain(VSOut i) : SV_Target { return float4(gSource.Sample(gSampler, i.uv
             m_context->RSSetState(m_rasterizer.Get());
             D3D11_RECT sr{0, 0, static_cast<LONG>(d.width), static_cast<LONG>(d.height)};
             m_context->RSSetScissorRects(1, &sr);
+            m_scissor = sr;
+            m_scissorValid = true;
             m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             ID3D11SamplerState *samplers[2] = {m_pointClamp.Get(), m_linearClamp.Get()};
             m_context->PSSetSamplers(0, 2, samplers);
@@ -934,10 +948,18 @@ float4 PSMain(VSOut i) : SV_Target { return float4(gSource.Sample(gSampler, i.uv
 
         void D3D11GfxDevice::SetConstants(const void *data, uint32_t size)
         {
+            if (m_cbValid && size == m_cbLastSize && std::memcmp(m_cbLast, data, size) == 0)
+                return; // same bytes still bound
             ID3D11Buffer *cb = nullptr;
             UINT first = 0, num = 0;
             if (!WriteConstants(data, size, &cb, first, num))
                 return;
+            if (size <= sizeof(m_cbLast))
+            {
+                std::memcpy(m_cbLast, data, size);
+                m_cbLastSize = size;
+                m_cbValid = true;
+            }
             if (m_context1)
             {
                 m_context1->VSSetConstantBuffers1(0, 1, &cb, &first, &num);
@@ -955,14 +977,21 @@ float4 PSMain(VSOut i) : SV_Target { return float4(gSource.Sample(gSampler, i.uv
             ID3D11ShaderResourceView *srvs[4] = {};
             for (uint32_t i = 0; i < count && i < 4; ++i)
                 srvs[i] = Srv(resources[i]);
+            if (std::memcmp(srvs, m_psSrv, sizeof(srvs)) == 0)
+                return;
             m_context->PSSetShaderResources(0, 4, srvs);
+            std::memcpy(m_psSrv, srvs, sizeof(srvs));
         }
 
         void D3D11GfxDevice::SetScissor(const Rect &r)
         {
             D3D11_RECT sr{static_cast<LONG>(r.x), static_cast<LONG>(r.y), static_cast<LONG>(r.x + r.width),
                           static_cast<LONG>(r.y + r.height)};
+            if (m_scissorValid && std::memcmp(&sr, &m_scissor, sizeof(sr)) == 0)
+                return;
             m_context->RSSetScissorRects(1, &sr);
+            m_scissor = sr;
+            m_scissorValid = true;
         }
 
         bool D3D11GfxDevice::Draw(const void *vertices, uint32_t vertexCount)
@@ -1010,6 +1039,7 @@ float4 PSMain(VSOut i) : SV_Target { return float4(gSource.Sample(gSampler, i.uv
             m_context->OMSetRenderTargets(0, nullptr, nullptr);
             ID3D11ShaderResourceView *nullSrv[4] = {};
             m_context->PSSetShaderResources(0, 4, nullSrv);
+            std::memset(m_psSrv, 0, sizeof(m_psSrv));
             m_inPass = false;
         }
 
@@ -1107,6 +1137,8 @@ float4 PSMain(VSOut i) : SV_Target { return float4(gSource.Sample(gSampler, i.uv
             m_context->Draw(3, 0);
             ID3D11ShaderResourceView *nullSrv = nullptr;
             m_context->PSSetShaderResources(0, 1, &nullSrv);
+            m_psSrv[0] = nullptr;
+            m_cbValid = false; // the present filter may have replaced PS constant slot 0
             m_context->OMSetRenderTargets(0, nullptr, nullptr);
             m_boundProgram = nullptr;
             m_pipeline = nullptr;

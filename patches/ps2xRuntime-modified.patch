@@ -1,3 +1,196 @@
+diff --git a/ps2xIOP/src/emulator/core/iop_kernel.cpp b/ps2xIOP/src/emulator/core/iop_kernel.cpp
+index af6a2dc..ed2c26b 100644
+--- a/ps2xIOP/src/emulator/core/iop_kernel.cpp
++++ b/ps2xIOP/src/emulator/core/iop_kernel.cpp
+@@ -26,6 +26,9 @@ namespace ps2x::iop::detail
+     void IopKernel::reset()
+     {
+         m_threads.clear();
++        m_order.clear();
++        m_orderDirty = true;
++        m_dirty = true;
+         m_semaphores.clear();
+         m_eventFlags.clear();
+         m_nextThreadId = 1;
+@@ -36,6 +39,8 @@ namespace ps2x::iop::detail
+ 
+     bool IopKernel::dispatchThreadImport(uint16_t ordinal, IopCpuState &cpu, uint64_t currentCycle)
+     {
++        markDirty();
++        m_orderDirty = true;
+         const auto setV0 = [&](int32_t value)
+         {
+             cpu.gpr[2] = static_cast<uint32_t>(value);
+@@ -352,6 +357,7 @@ namespace ps2x::iop::detail
+ 
+     bool IopKernel::dispatchSemaphoreImport(uint16_t ordinal, IopCpuState &cpu)
+     {
++        markDirty();
+         const auto setV0 = [&](int32_t value)
+         {
+             cpu.gpr[2] = static_cast<uint32_t>(value);
+@@ -516,6 +522,7 @@ namespace ps2x::iop::detail
+ 
+     bool IopKernel::setInternalEventFlag(int id, uint32_t bits)
+     {
++        markDirty();
+         const auto event = m_eventFlags.find(id);
+         if (event == m_eventFlags.end())
+             return false;
+@@ -526,6 +533,7 @@ namespace ps2x::iop::detail
+ 
+     bool IopKernel::dispatchEventImport(uint16_t ordinal, IopCpuState &cpu)
+     {
++        markDirty();
+         const auto setV0 = [&](int32_t value)
+         {
+             cpu.gpr[2] = static_cast<uint32_t>(value);
+@@ -654,6 +662,7 @@ namespace ps2x::iop::detail
+ 
+     void IopKernel::sleepCurrent(IopCpuState &cpu)
+     {
++        markDirty();
+         if (m_currentThread == nullptr)
+             return;
+         m_currentThread->state = IopThreadState::Sleep;
+@@ -662,6 +671,7 @@ namespace ps2x::iop::detail
+ 
+     void IopKernel::delayCurrentUntil(uint64_t wakeCycle, IopCpuState &cpu)
+     {
++        markDirty();
+         if (m_currentThread == nullptr)
+             return;
+         m_currentThread->wakeCycle = wakeCycle;
+@@ -669,26 +679,54 @@ namespace ps2x::iop::detail
+         cpu.yielded = true;
+     }
+ 
+-    IopThread *IopKernel::beginNextReady(uint64_t currentCycle)
++    void IopKernel::rebuildOrder()
+     {
++        m_order.clear();
++        m_order.reserve(m_threads.size());
+         for (auto &[id, thread] : m_threads)
+-        {
+-            if (thread.state == IopThreadState::Delay && thread.wakeCycle <= currentCycle)
+-                thread.state = IopThreadState::Ready;
+-        }
++            m_order.push_back(&thread);
++        m_orderDirty = false;
++    }
++
++    IopThread *IopKernel::beginNextReady(uint64_t currentCycle)
++    {
++        // Caminho rapido: a ultima varredura nao achou thread pronta, nada mudou desde entao e
++        // nenhum Delay vence ainda -> o resultado seria nullptr de novo.
++        if (!m_dirty && currentCycle < m_minWake)
++            return nullptr;
++        if (m_orderDirty)
++            rebuildOrder();
+ 
++        // Uma passada (promove Delay vencido e escolhe a melhor Ready na mesma iteracao; ordem de id
++        // crescente, desempate por prioridade e depois id, igual ao laco duplo anterior).
+         IopThread *next = nullptr;
+-        for (auto &[id, thread] : m_threads)
++        uint64_t minWake = UINT64_MAX;
++        for (IopThread *thread : m_order)
+         {
+-            if (thread.state != IopThreadState::Ready)
++            if (thread->state == IopThreadState::Delay)
++            {
++                if (thread->wakeCycle <= currentCycle)
++                    thread->state = IopThreadState::Ready;
++                else
++                {
++                    minWake = std::min(minWake, thread->wakeCycle);
++                    continue;
++                }
++            }
++            if (thread->state != IopThreadState::Ready)
+                 continue;
+-            if (next == nullptr || thread.priority < next->priority ||
+-                (thread.priority == next->priority && thread.id < next->id))
+-                next = &thread;
++            if (next == nullptr || thread->priority < next->priority ||
++                (thread->priority == next->priority && thread->id < next->id))
++                next = thread;
+         }
+         if (next == nullptr)
++        {
++            m_minWake = minWake;
++            m_dirty = false;
+             return nullptr;
++        }
+ 
++        m_dirty = true;
+         m_currentThread = next;
+         next->state = IopThreadState::Running;
+         next->cpu.stopped = false;
+@@ -698,6 +736,8 @@ namespace ps2x::iop::detail
+ 
+     uint64_t IopKernel::nextWakeCycle(uint64_t fallback) const
+     {
++        if (!m_dirty)
++            return std::min(fallback, m_minWake);
+         uint64_t nextWake = fallback;
+         for (const auto &[id, thread] : m_threads)
+         {
+@@ -709,6 +749,7 @@ namespace ps2x::iop::detail
+ 
+     void IopKernel::endTimeslice(IopThread &thread, uint32_t returnSentinel)
+     {
++        markDirty();
+         if (thread.cpu.pc == returnSentinel || thread.cpu.stopped)
+             thread.state = IopThreadState::Dormant;
+         else if (thread.state == IopThreadState::Running)
+@@ -719,6 +760,7 @@ namespace ps2x::iop::detail
+ 
+     void IopKernel::cleanupDeadThreads()
+     {
++        markDirty();
+         for (auto thread = m_threads.begin(); thread != m_threads.end();)
+         {
+             if (thread->second.state != IopThreadState::Dead)
+@@ -729,11 +771,13 @@ namespace ps2x::iop::detail
+             if (thread->second.stackBase != 0u)
+                 (void)m_memory.freeAllocation(thread->second.stackBase);
+             thread = m_threads.erase(thread);
++            m_orderDirty = true;
+         }
+     }
+ 
+     void IopKernel::terminateThreadsInRange(uint32_t base, uint32_t size)
+     {
++        markDirty();
+         for (auto &[id, thread] : m_threads)
+         {
+             const uint32_t pc = IopMemory::physicalAddress(thread.cpu.pc);
+diff --git a/ps2xIOP/src/emulator/core/iop_kernel.h b/ps2xIOP/src/emulator/core/iop_kernel.h
+index 885b6f5..1866022 100644
+--- a/ps2xIOP/src/emulator/core/iop_kernel.h
++++ b/ps2xIOP/src/emulator/core/iop_kernel.h
+@@ -5,6 +5,7 @@
+ #include <cstddef>
+ #include <cstdint>
+ #include <map>
++#include <vector>
+ 
+ namespace ps2x::iop::detail
+ {
+@@ -99,5 +100,13 @@ namespace ps2x::iop::detail
+         uint32_t m_nextSemaphoreId = 1;
+         uint32_t m_nextEventFlagId = 1;
+         IopThread *m_currentThread = nullptr;
++        // Cache do escalonador (so otimizacao; mesma ordem de escolha). m_dirty = algum estado de thread
++        // pode ter mudado desde a ultima varredura que nao achou thread pronta.
++        void markDirty() noexcept { m_dirty = true; }
++        void rebuildOrder();
++        std::vector<IopThread *> m_order;   // threads em ordem crescente de id (nos do std::map sao estaveis)
++        bool m_orderDirty = true;
++        mutable bool m_dirty = true;
++        mutable uint64_t m_minWake = UINT64_MAX; // menor wakeCycle entre threads em Delay (valido se !m_dirty)
+     };
+ }
 diff --git a/ps2xIOP/src/emulator/core/iop_memory.h b/ps2xIOP/src/emulator/core/iop_memory.h
 index f76c631..020ddc7 100644
 --- a/ps2xIOP/src/emulator/core/iop_memory.h

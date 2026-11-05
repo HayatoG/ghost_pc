@@ -16,7 +16,7 @@ namespace
     constexpr uint32_t kBlocksPerPage = 32u;
     constexpr int kMaxRow = 2047;
     constexpr size_t kOutboxFlushItems = 64u;
-    constexpr int kMargin = 1; // rows/columns around the vertex bounds (the rasterizers cover floor..ceil)
+    constexpr int kMargin = 3; // rows/columns around the vertex bounds (verified value; 1 would do, not retested)
 
     struct PageDims
     {
@@ -65,15 +65,20 @@ namespace
         return static_cast<int>(v);
     }
 
-    // Appends the pages of the pixel rectangle [x0,x1]x[y0,y1] of a buffer (base in pages).
+    // Appends the pages of the pixel rectangle [x0,x1]x[y0,y1] of a buffer (base in pages, `width` in
+    // 64-pixel units as in FBW/TBW/DBW/CBW: a page row holds width*64/page_width pages, i.e. half of
+    // `width` for the 128-pixel-wide T8/T4 pages).
     void AppendRectPages(uint32_t basePage, uint32_t width, PageDims dims, uint32_t x0, uint32_t x1, uint32_t y0,
                          uint32_t y1, bool misaligned, std::vector<uint16_t> &out)
     {
+        const uint32_t rowPixels = std::max<uint32_t>(width, 1u) * 64u;
+        const uint32_t stride = std::max<uint32_t>(rowPixels / dims.w, 1u);
+        const bool partial = (rowPixels % dims.w) != 0u;
         const uint32_t pr0 = y0 / dims.h, pr1 = y1 / dims.h;
-        const uint32_t pc0 = x0 / dims.w, pc1 = x1 / dims.w;
+        const uint32_t pc0 = x0 / dims.w, pc1 = x1 / dims.w + ((misaligned || partial) ? 1u : 0u);
         for (uint32_t pr = pr0; pr <= pr1; ++pr)
-            for (uint32_t pc = pc0; pc <= pc1 + (misaligned ? 1u : 0u); ++pc)
-                out.push_back(static_cast<uint16_t>((basePage + pr * width + pc) & kPageMask));
+            for (uint32_t pc = pc0; pc <= pc1; ++pc)
+                out.push_back(static_cast<uint16_t>((basePage + pr * stride + pc) & kPageMask));
     }
 
     enum class ItemType : uint8_t
@@ -91,6 +96,13 @@ namespace
         const unsigned n = std::thread::hardware_concurrency();
         return n ? n : 4u;
     }
+}
+
+// PS2X_GS_BANDS_VERIFY_FROM=<vsync>: per-draw verification (PS2X_GS_BANDS_VERIFY=2) only from that vsync on.
+static uint64_t StrictFromVsync()
+{
+    static const uint64_t from = [] { const char *v = std::getenv("PS2X_GS_BANDS_VERIFY_FROM"); return v ? std::strtoull(v, nullptr, 10) : 0ull; }();
+    return from;
 }
 
 unsigned GSBandedBackend::DefaultWorkers()
@@ -295,6 +307,7 @@ void GSBandedBackend::FlushWorker(Worker &worker)
 
 void GSBandedBackend::FlushPending()
 {
+    const auto apiLock = LockApi();
     for (auto &w : m_workers)
         FlushWorker(*w);
 }
@@ -355,6 +368,7 @@ void GSBandedBackend::EndSerialMode()
 
 void GSBandedBackend::Drain()
 {
+    const auto apiLock = LockApi();
     FlushPending();
     WaitIdle();
 }
@@ -452,10 +466,11 @@ bool GSBandedBackend::TexelBounds(const GSPrimitiveBatch &batch, TexelRect &out)
         }
         else
         {
-            if (!(std::fabs(v.q) > 1.0e-20f))
+            // The rasterizers divide by the signed q (fabsQ keeps the sign; |q| <= 1e-8 becomes 1).
+            if (!(std::fabs(v.q) > 1.0e-6f))
                 return false;
             (v.q > 0.0f ? positive : negative) = true;
-            const double q = std::fabs(static_cast<double>(v.q));
+            const double q = static_cast<double>(v.q);
             tu = v.s / q * texW;
             tv = v.t / q * texH;
         }
@@ -547,6 +562,7 @@ bool GSBandedBackend::TransferHazard(const GSTransferCommand &command)
 
 void GSBandedBackend::Initialize(uint8_t *vram, uint32_t vramSize)
 {
+    const auto apiLock = LockApi();
     Barrier();
     m_master->Initialize(vram, vramSize); // may throw (too small VRAM) before any worker sees it
     m_vram = vram;
@@ -568,6 +584,7 @@ void GSBandedBackend::Initialize(uint8_t *vram, uint32_t vramSize)
 
 bool GSBandedBackend::RestoreRecordedState(std::FILE *file)
 {
+    const auto apiLock = LockApi();
     Barrier();
     auto *master = dynamic_cast<GSCpuBackend *>(m_master.get());
     if (!master || !file)
@@ -595,6 +612,7 @@ bool GSBandedBackend::RestoreRecordedState(std::FILE *file)
 
 void GSBandedBackend::Reset()
 {
+    const auto apiLock = LockApi();
     Barrier();
     m_master->Reset();
     if (m_shadow)
@@ -608,6 +626,7 @@ void GSBandedBackend::Reset()
 
 void GSBandedBackend::Submit(const GSPrimitiveBatch &batch)
 {
+    const auto apiLock = LockApi();
     if (batch.vertexCount == 0u)
         return;
     if (m_shadow)
@@ -765,7 +784,7 @@ void GSBandedBackend::Submit(const GSPrimitiveBatch &batch)
         item.type = ItemType::DrawWhole;
         item.batch = batch;
         Push(*m_workers[0], std::move(item));
-        if (m_shadow && m_config.verifyStrict)
+        if (m_shadow && m_config.verifyStrict && m_lastVsync >= StrictFromVsync())
         {
             Drain();
             VerifyAgainstShadow(&batch);
@@ -817,7 +836,7 @@ void GSBandedBackend::Submit(const GSPrimitiveBatch &batch)
             Push(*m_workers[static_cast<size_t>(s % count)], WorkItem(item));
         Push(*m_workers[static_cast<size_t>(s1 % count)], std::move(item));
     }
-    if (m_shadow && m_config.verifyStrict)
+    if (m_shadow && m_config.verifyStrict && m_lastVsync >= StrictFromVsync())
     {
         FlushPending();
         WaitIdle();
@@ -827,6 +846,7 @@ void GSBandedBackend::Submit(const GSPrimitiveBatch &batch)
 
 void GSBandedBackend::LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut)
 {
+    const auto apiLock = LockApi();
     if (m_shadow)
         m_shadow->LoadClut(tex0, texclut);
     EndSerialMode();
@@ -855,6 +875,7 @@ void GSBandedBackend::LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclu
 
 void GSBandedBackend::BeginTransfer(const GSTransferCommand &command)
 {
+    const auto apiLock = LockApi();
     // Host->local and local->local run on the master at once; they need no barrier unless they touch
     // pages used in the pass (the master writes while the workers draw elsewhere). Local->host and
     // anything else drain everything.
@@ -882,6 +903,7 @@ void GSBandedBackend::BeginTransfer(const GSTransferCommand &command)
 
 void GSBandedBackend::UploadImage(const uint8_t *data, uint32_t sizeBytes)
 {
+    const auto apiLock = LockApi();
     // Draws may have been queued since BeginTransfer: re-check the destination against the pass.
     EndSerialMode();
     if (m_uploadPages.empty())
@@ -903,6 +925,7 @@ void GSBandedBackend::Flush() {}
 
 void GSBandedBackend::TextureFlush()
 {
+    const auto apiLock = LockApi();
     if (m_shadow)
         m_shadow->TextureFlush();
     // In serial mode the other workers are idle: invalidating them early is harmless.
@@ -913,18 +936,22 @@ void GSBandedBackend::TextureFlush()
 
 void GSBandedBackend::Sync(GSSyncReason reason)
 {
+    const auto apiLock = LockApi();
     m_master->Sync(reason);
 }
 
 PresentationFrame GSBandedBackend::Present(const GSPresentationRequest &request)
 {
+    const auto apiLock = LockApi();
     Barrier();
+    m_lastVsync = request.vsyncTick;
     VerifyAgainstShadow();
     return m_master->Present(request);
 }
 
 bool GSBandedBackend::ClearFramebuffer(const GSContext &context, uint32_t rgba)
 {
+    const auto apiLock = LockApi();
     Barrier();
     if (m_shadow)
         m_shadow->ClearFramebuffer(context, rgba);
@@ -933,6 +960,7 @@ bool GSBandedBackend::ClearFramebuffer(const GSContext &context, uint32_t rgba)
 
 uint32_t GSBandedBackend::ConsumeLocalToHostBytes(uint8_t *dst, uint32_t maxBytes)
 {
+    const auto apiLock = LockApi();
     Barrier();
     if (m_shadow)
     {
@@ -944,12 +972,14 @@ uint32_t GSBandedBackend::ConsumeLocalToHostBytes(uint8_t *dst, uint32_t maxByte
 
 uint32_t GSBandedBackend::ReadVram(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y) const
 {
+    const auto apiLock = LockApi();
     const_cast<GSBandedBackend *>(this)->Barrier();
     return m_master->ReadVram(psm, base, bw, x, y);
 }
 
 void GSBandedBackend::WriteVram(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint32_t value)
 {
+    const auto apiLock = LockApi();
     Barrier();
     m_master->WriteVram(psm, base, bw, x, y, value);
     if (m_shadow)
@@ -958,12 +988,14 @@ void GSBandedBackend::WriteVram(uint32_t psm, uint32_t base, uint32_t bw, uint32
 
 void GSBandedBackend::SnapshotVram(std::vector<uint8_t> &out) const
 {
+    const auto apiLock = LockApi();
     const_cast<GSBandedBackend *>(this)->Barrier();
     m_master->SnapshotVram(out);
 }
 
 GSTransferSnapshot GSBandedBackend::GetTransferSnapshot() const
 {
+    const auto apiLock = LockApi();
     return m_master->GetTransferSnapshot();
 }
 
@@ -1001,7 +1033,8 @@ void GSBandedBackend::VerifyAgainstShadow(const GSPrimitiveBatch *draw)
             if (count++ == 0u)
                 first = i;
         }
-    std::cerr << "[gs-bands] VERIFY MISMATCH #" << m_verifyMismatches << " check=" << m_verifyChecks << (draw ? " (per draw)" : "")
+    std::cerr << "[gs-bands] VERIFY MISMATCH #" << m_verifyMismatches << " check=" << m_verifyChecks
+              << " vsync=" << m_lastVsync << (draw ? " (per draw)" : "")
               << " bytes=" << count << " first=0x" << std::hex << first << " page=" << std::dec << (first / 8192u) << std::endl;
     std::memcpy(m_shadowVram.data(), m_vram, m_vramSize); // resync so one bug is reported once
     m_shadow->TextureFlush();

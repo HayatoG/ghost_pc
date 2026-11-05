@@ -29,7 +29,7 @@ namespace
 
     // Draw flags (F_* in gs_hw_shaders.h)
     constexpr uint32_t F_TME = 0x001u, F_STQ = 0x002u, F_UVROUND = 0x004u, F_UVTRUNC = 0x008u, F_LINEAR = 0x010u,
-                       F_FGE = 0x020u, F_SRCSURF = 0x040u, F_BLEND = 0x080u, F_FBA = 0x100u;
+                       F_FGE = 0x020u, F_SRCSURF = 0x040u, F_BLEND = 0x080u, F_FBA = 0x100u, F_DSTMASK = 0x400u;
 
     // Pipeline key: blend enable 1 | src 3 | dst 3 | op 2 | mask 4 | depth test 1 | cmp 2 | depth write 1 | has depth 1 | has color 1
     uint32_t PipelineKey(const gs_rhi::BlendDesc &b, const gs_rhi::DepthDesc &d, bool hasDepth, bool hasColor)
@@ -314,6 +314,111 @@ namespace
         bits = static_cast<uint32_t>(kS + 1) | ((dS ? 1u : 0u) << 2) | (C << 4) | (fix << 8);
         return exact;
     }
+
+    // 256-byte blocks (bit per block, per page) covered by the w x h pixel rectangle at (x0, y0).
+    template <GSMem::PixelStorageMode M, typename Table>
+    void RectBlocks(const Table &table, uint32_t bp, uint32_t bw, uint32_t x0, uint32_t y0, uint32_t w, uint32_t h, uint32_t *out)
+    {
+        using Traits = GSMem::PixelStorageTraits<M>;
+        for (uint32_t y = y0; y < y0 + h; ++y)
+            for (uint32_t x = x0; x < x0 + w; ++x)
+            {
+                const uint32_t byte = ((Traits::Address(table, bp, bw, x, y) * GSMem::UnpackedBitWidth(M)) >> 3) & (4u * 1024u * 1024u - 1u);
+                out[byte >> 13] |= 1u << ((byte >> 8) & 31u);
+            }
+    }
+
+    // Host->local transfer of `size` bytes, pixel order of GSCpuBackend::UploadImage (row-major over
+    // rrw pixels from (dsax, dsay); a trailing partial pixel of a chunk is dropped like the reference).
+    // The GSMem traits are inlined: no per-pixel virtual call, division or lock.
+    template <GSMem::PixelStorageMode M, typename Table>
+    void UploadPixels(const Table &table, uint8_t *vram, uint32_t dbp, uint32_t dbw, uint32_t dsax, uint32_t rrw, uint32_t &x,
+                      uint32_t &y, uint32_t &copied, uint32_t total, const uint8_t *data, uint32_t size, uint32_t *blocks)
+    {
+        using Traits = GSMem::PixelStorageTraits<M>;
+        using Packed = typename Traits::PackedT;
+        // Address = page * pixelsPerPage + table[block][y % ph][x % pw] (GSMem::PixelStorageTraits::Address),
+        // with the row part cached while y does not change. Stores replicate PixelStorageTraits::Write.
+        constexpr uint32_t pw = static_cast<uint32_t>(Traits::PageExtent().x), ph = static_cast<uint32_t>(Traits::PageExtent().y);
+        constexpr uint32_t ppp = static_cast<uint32_t>(Traits::PixelsPerPage());
+        constexpr uint32_t kBits = static_cast<uint32_t>(GSMem::UnpackedBitWidth(M));
+        constexpr uint32_t kOff = static_cast<uint32_t>(Traits::BitOffset());
+        constexpr uint32_t kMem = 4u * 1024u * 1024u;
+        const uint32_t blk = dbp % 32u, basePage = dbp / 32u, ppr = (dbw * 64u) / pw;
+        uint32_t cachedY = ~0u, rowBase = 0;
+        const uint16_t *rowTab = nullptr;
+        auto store = [&](uint32_t value)
+        {
+            if (y != cachedY)
+            {
+                cachedY = y;
+                rowTab = &table[blk][y % ph][0];
+                rowBase = (basePage + (y / ph) * ppr) * ppp;
+            }
+            const uint32_t bits = (rowBase + (x / pw) * ppp + rowTab[x % pw]) * kBits + kOff;
+            const uint32_t byte = (bits >> 3) & (kMem - static_cast<uint32_t>(sizeof(Packed)));
+            uint8_t *ptr = vram + byte;
+            if (blocks) // record the 256-byte blocks written (bit per block, 32 per 8 KiB page)
+                blocks[byte >> 13] |= 1u << ((byte >> 8) & 31u);
+            if constexpr (M == GSMem::C24 || M == GSMem::Z24)
+            {
+                uint32_t old;
+                std::memcpy(&old, ptr, 4);
+                old = (old & 0xFF000000u) | (value & 0x00FFFFFFu);
+                std::memcpy(ptr, &old, 4);
+            }
+            else if constexpr (M == GSMem::P4 || M == GSMem::P4HL || M == GSMem::P4HH)
+            {
+                const uint32_t sh = bits & 7u;
+                *ptr = static_cast<uint8_t>((*ptr & ~(0x0Fu << sh)) | ((value & 0x0Fu) << sh));
+            }
+            else
+            {
+                const Packed pv = static_cast<Packed>(value);
+                std::memcpy(ptr, &pv, sizeof(Packed));
+            }
+        };
+        constexpr uint32_t bytesPerPixel = (M == GSMem::C32 || M == GSMem::Z32) ? 4u
+                                         : (M == GSMem::C24 || M == GSMem::Z24) ? 3u
+                                         : (M == GSMem::C16 || M == GSMem::C16S || M == GSMem::Z16 || M == GSMem::Z16S) ? 2u
+                                         : (M == GSMem::P8 || M == GSMem::P8H) ? 1u : 0u; // 0: two 4-bit pixels per byte
+        const uint32_t xEnd = dsax + rrw;
+        auto advance = [&]()
+        {
+            ++copied;
+            if (++x == xEnd)
+            {
+                x = dsax;
+                ++y;
+            }
+        };
+        uint32_t off = 0;
+        if constexpr (bytesPerPixel == 0u)
+        {
+            while (off < size && copied < total)
+            {
+                const uint8_t packed = data[off++];
+                store(packed & 0x0Fu);
+                advance();
+                if (copied < total)
+                {
+                    store(packed >> 4);
+                    advance();
+                }
+            }
+        }
+        else
+        {
+            while (size - off >= bytesPerPixel && copied < total)
+            {
+                uint32_t v = 0;
+                std::memcpy(&v, data + off, bytesPerPixel);
+                off += bytesPerPixel;
+                store(v);
+                advance();
+            }
+        }
+    }
 }
 
 bool GSHwBackend::DrawConstants::operator==(const DrawConstants &o) const { return std::memcmp(this, &o, sizeof(*this)) == 0; }
@@ -327,6 +432,7 @@ bool GSHwBackend::BatchKey::operator==(const BatchKey &o) const
 GSHwBackend::GSHwBackend(Options options) : m_options(options)
 {
     m_options.scale = std::clamp<uint32_t>(m_options.scale, 1u, 8u);
+    m_fastUpload = std::getenv("PS2X_GS_RECORD") == nullptr && std::getenv("PS2X_GS_HW_SLOWUPLOAD") == nullptr;
     m_cpuNewer.setAll();
     m_vertices.reserve(65536);
     m_presentSnapshot.assign(kVramBytes, 0u);
@@ -350,7 +456,9 @@ std::string GSHwBackend::StatsLine() const
       << " readback_pages=" << s.readbackPages << " tex_rt=" << s.rtSampled << " tex_vram=" << s.vramSampled
       << " feedback=" << s.feedbackCopies << " approx_blend=" << s.unsupportedBlend << " partial_mask=" << s.partialMask
       << " date=" << s.date << " pabe=" << s.pabe << " flush_key=" << s.flushKey << " (target=" << s.whyTarget << " src=" << s.whySource << " pso=" << s.whyPipeline
-      << " tex=" << s.whyTex << " tex1=" << s.whyClut << " other=" << s.whyOther << ")" << " flush_coh=" << s.flushCoherence;
+      << " tex=" << s.whyTex << " tex1=" << s.whyClut << " other=" << s.whyOther << ")" << " flush_coh=" << s.flushCoherence
+      << " cpu_why=(prim=" << s.cpuWhy[0] << " fpsm=" << s.cpuWhy[1] << " zpsm=" << s.cpuWhy[2] << " tpsm=" << s.cpuWhy[3]
+      << " bitmask=" << s.cpuWhy[4] << ") upload_mb=" << (s.uploadBytes >> 20) << " patch_uploads=" << s.patchUploads << " clut_no_readback=" << s.clutNoReadback << " clut_loads=" << s.clutLoads << " clut_skipped=" << s.clutSkipped;
     if (m_device)
     {
         const gs_rhi::GfxStats &g = m_device->Stats();
@@ -388,6 +496,8 @@ void GSHwBackend::Reset()
     m_clut.fill(0);
     m_clutCbp.fill(0);
     m_clutChanged = true;
+    m_lastClutLoad.valid = false;
+    m_upload.active = false;
     m_reference.Reset();
 }
 
@@ -405,6 +515,8 @@ bool GSHwBackend::RestoreRecordedState(std::FILE *file)
     bool ok = std::fread(m_clut.data(), sizeof(m_clut), 1, file) == 1 && std::fread(m_clutCbp.data(), sizeof(m_clutCbp), 1, file) == 1;
     std::fseek(file, end, SEEK_SET);
     m_clutChanged = true;
+    m_lastClutLoad.valid = false;
+    m_upload.active = false;
     m_cpuNewer.setAll();
     m_gpuNewer.clear();
     m_surfaces.clear();
@@ -492,6 +604,7 @@ bool GSHwBackend::InitGpuLocked(std::string &error)
         {"COLOR", 0, VertexFormat::UInt1, 12},
         {"TEXCOORD", 0, VertexFormat::Float4, 16}, // s, t, q, fog
         {"TEXBASE", 0, VertexFormat::UInt1, 32},
+        {"STATEA", 0, VertexFormat::UInt4, 36},
     };
     m_drawProgram = m_device->CreateProgram(pd, layout, sizeof(HwVertex), error);
     if (!m_drawProgram)
@@ -678,7 +791,10 @@ void GSHwBackend::WritebackLocked(Surface &s)
     }
     const PageSet pages = s.dirty;
     pages.forEach([&](uint32_t p)
-                  { if (m_owner[p] == &s) m_owner[p] = nullptr; });
+                  {
+                      if (m_owner[p] == &s) m_owner[p] = nullptr;
+                      m_cpuValid[p] = 0u;
+                  });
     m_gpuNewer |= pages;
     for (auto &t : m_surfaces)
         if (t.get() != &s && t->span.intersects(pages))
@@ -771,6 +887,7 @@ void GSHwBackend::MakeCurrentLocked(Surface &s, const PageSet &pages)
 
 void GSHwBackend::MarkWrittenLocked(Surface &s, const PageSet &pages, int x0, int y0, int x1, int y1)
 {
+    BumpPages(pages);
     if (s.dx1 < s.dx0)
     {
         s.dx0 = x0; s.dy0 = y0; s.dx1 = x1; s.dy1 = y1;
@@ -784,7 +901,7 @@ void GSHwBackend::MarkWrittenLocked(Surface &s, const PageSet &pages, int x0, in
     if (!fresh.any())
         return;
     s.dirty |= fresh;
-    fresh.forEach([&](uint32_t p) { m_owner[p] = &s; });
+    fresh.forEach([&](uint32_t p) { m_owner[p] = &s; m_cpuValid[p] = 0u; });
     m_gpuNewer.remove(fresh); // the target is the only up-to-date copy now
     m_cpuNewer.remove(fresh);
     for (auto &t : m_surfaces)
@@ -869,6 +986,7 @@ void GSHwBackend::FinishCpuWriteLocked(const PageSet &pages)
 {
     if (!gpuActive() || !pages.any())
         return;
+    BumpPages(pages);
     m_cpuNewer |= pages;
     for (auto &t : m_surfaces)
         if (t->span.intersects(pages))
@@ -895,7 +1013,21 @@ void GSHwBackend::LoadClutMirrorLocked(const GSTex0Reg &tex0, const GSTexClutReg
     const bool thirtyTwoBit = tex0.cpsm == GS_PSM_CT32 || tex0.cpsm == GS_PSM_CT24;
     if (!sixteenBit && !thirtyTwoBit)
         return;
-    const ReadFunc read = ReadFuncFor(tex0.cpsm);
+    // inlined GSMem reads (this runs ~750 times per frame in the 3D scene)
+    const auto &t32 = GSMem::GetPageTableC32();
+    const auto &t16 = GSMem::GetPageTableC16();
+    const auto &t16s = GSMem::GetPageTableC16S();
+    const uint32_t cpsm = tex0.cpsm;
+    auto read = [&](uint8_t *mem, uint32_t bp, uint32_t bw, uint32_t x, uint32_t y) -> uint32_t
+    {
+        switch (cpsm)
+        {
+        case GS_PSM_CT32: return GSMem::PixelStorageTraits<GSMem::C32>::Read(t32, mem, bp, bw, x, y);
+        case GS_PSM_CT24: return GSMem::PixelStorageTraits<GSMem::C24>::Read(t32, mem, bp, bw, x, y);
+        case GS_PSM_CT16: return GSMem::PixelStorageTraits<GSMem::C16>::Read(t16, mem, bp, bw, x, y);
+        default: return GSMem::PixelStorageTraits<GSMem::C16S>::Read(t16s, mem, bp, bw, x, y);
+        }
+    };
     const uint32_t entryCount = fourBit ? 16u : 256u;
     const uint32_t csaMask = sixteenBit ? 0x1Fu : 0x0Fu;
     const uint32_t destinationBase = (static_cast<uint32_t>(tex0.csa) & csaMask) << 4u;
@@ -960,18 +1092,70 @@ void GSHwBackend::LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut)
     case 5u: load = m_clutCbp[1] != tex0.cbp; m_clutCbp[1] = tex0.cbp; break;
     default: break;
     }
-    if (load && gpuActive())
+    if (!load)
     {
-        PageSet pages;
-        if (tex0.csm == 0u)
-            AddPages(pages, tex0.cpsm, tex0.cbp, 1u, 0, 0, 15, 15);
-        else
-            AddPages(pages, tex0.cpsm, tex0.cbp, texclut.cbw != 0u ? texclut.cbw : 1u, texclut.cou * 16, texclut.cov,
-                     texclut.cou * 16 + 255, texclut.cov);
+        m_reference.LoadClut(tex0, texclut);
+        return;
+    }
+    ++m_stats.clutLoads;
+    PageSet pages;
+    if (tex0.csm == 0u)
+        AddPages(pages, tex0.cpsm, tex0.cbp, 1u, 0, 0, 15, 15);
+    else
+        AddPages(pages, tex0.cpsm, tex0.cbp, texclut.cbw != 0u ? texclut.cbw : 1u, texclut.cou * 16, texclut.cov,
+                 texclut.cou * 16 + 255, texclut.cov);
+    // Same load as the previous one (same registers and CLD) from unchanged pages: the mirror and the
+    // reference CLUT already hold exactly this result (versions only grow, so equal sums = equal versions).
+    ClutLoadKey key{};
+    key.a = static_cast<uint64_t>(tex0.cbp) | (static_cast<uint64_t>(tex0.cpsm) << 16) | (static_cast<uint64_t>(tex0.csm) << 24) |
+            (static_cast<uint64_t>(tex0.csa) << 32) | (static_cast<uint64_t>(tex0.cld) << 40) | (static_cast<uint64_t>(tex0.psm) << 48);
+    key.b = static_cast<uint64_t>(texclut.cbw) | (static_cast<uint64_t>(texclut.cou) << 16) | (static_cast<uint64_t>(texclut.cov) << 32);
+    pages.forEach([&](uint32_t p) { key.ver += m_pageVer[p]; });
+    key.valid = true;
+    if (gpuActive() && m_lastClutLoad.valid && m_lastClutLoad.a == key.a && m_lastClutLoad.b == key.b && m_lastClutLoad.ver == key.ver)
+    {
+        ++m_stats.clutSkipped;
+        return;
+    }
+    m_lastClutLoad = key;
+    if (gpuActive())
+    {
+        // Skip the readback of GPU-newer pages whose CLUT blocks were written by a patched upload
+        // (the CPU copy of those blocks is current; typical: CLUT uploaded next to rendered data).
+        bool anyGpu = false;
+        pages.forEach([&](uint32_t p) { anyGpu = anyGpu || m_gpuNewer.test(p); });
+        if (anyGpu)
+        {
+            std::array<uint32_t, kPageCount> need{};
+            const bool fourBit = IsFourBit(tex0.psm);
+            const uint32_t bw = tex0.csm == 0u ? 1u : (texclut.cbw != 0u ? texclut.cbw : 1u);
+            const uint32_t x0 = tex0.csm == 0u ? 0u : texclut.cou * 16u, y0 = tex0.csm == 0u ? 0u : texclut.cov;
+            const uint32_t w = tex0.csm == 0u ? (fourBit ? 8u : 16u) : (fourBit ? 16u : 256u);
+            const uint32_t h = tex0.csm == 0u ? (fourBit ? 2u : 16u) : 1u;
+            bool known = true;
+            switch (tex0.cpsm)
+            {
+            case GS_PSM_CT32: case GS_PSM_CT24: RectBlocks<GSMem::C32>(GSMem::GetPageTableC32(), tex0.cbp, bw, x0, y0, w, h, need.data()); break;
+            case GS_PSM_CT16: RectBlocks<GSMem::C16>(GSMem::GetPageTableC16(), tex0.cbp, bw, x0, y0, w, h, need.data()); break;
+            case GS_PSM_CT16S: RectBlocks<GSMem::C16S>(GSMem::GetPageTableC16S(), tex0.cbp, bw, x0, y0, w, h, need.data()); break;
+            default: known = false; break;
+            }
+            if (known)
+            {
+                PageSet filtered;
+                pages.forEach([&](uint32_t p)
+                              {
+                                  if (m_owner[p] || (m_gpuNewer.test(p) && (need[p] & ~m_cpuValid[p]) != 0u))
+                                      filtered.set(p);
+                              });
+                if (!(filtered == pages))
+                    ++m_stats.clutNoReadback;
+                pages = filtered;
+            }
+        }
         PrepareCpuReadLocked(pages);
     }
-    if (load)
-        LoadClutMirrorLocked(tex0, texclut);
+    LoadClutMirrorLocked(tex0, texclut);
     m_reference.LoadClut(tex0, texclut);
 }
 
@@ -984,15 +1168,53 @@ static void PrimitivePages(const GSPrimitiveBatch &batch, GSHwBackend::PageSet &
     const GSDrawState &st = batch.state;
     const GSContext &ctx = st.context;
     const uint32_t fbw = std::max<uint32_t>(ctx.frame.fbw, 1u);
-    const int sx0 = ctx.scissor.x0, sy0 = ctx.scissor.y0, sx1 = ctx.scissor.x1, sy1 = ctx.scissor.y1;
-    AddPages(write, ctx.frame.psm, GSInternal::framePageBaseToBlock(ctx.frame.fbp), fbw, sx0, sy0, sx1, sy1);
-    AddPages(write, ctx.zbuf.psm, GSInternal::framePageBaseToBlock(ctx.zbuf.zbp), fbw, sx0, sy0, sx1, sy1);
+    int sx0 = ctx.scissor.x0, sy0 = ctx.scissor.y0, sx1 = ctx.scissor.x1, sy1 = ctx.scissor.y1;
+    // Only the primitive's bounding box (with a 1-pixel margin), not the whole scissor: the CPU
+    // fallback then synchronises (readback) only the pages it can touch.
+    const uint32_t n = std::min<uint32_t>(batch.vertexCount, 3u);
+    if (n != 0u)
+    {
+        const float ofx = static_cast<float>(ctx.xyoffset.ofx >> 4), ofy = static_cast<float>(ctx.xyoffset.ofy >> 4);
+        float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f;
+        for (uint32_t i = 0; i < n; ++i)
+        {
+            x0 = std::min(x0, batch.vertices[i].x - ofx); x1 = std::max(x1, batch.vertices[i].x - ofx);
+            y0 = std::min(y0, batch.vertices[i].y - ofy); y1 = std::max(y1, batch.vertices[i].y - ofy);
+        }
+        if (std::isfinite(x0) && std::isfinite(x1) && std::isfinite(y0) && std::isfinite(y1) && x1 - x0 < 4096.0f && y1 - y0 < 4096.0f)
+        {
+            sx0 = std::max(sx0, static_cast<int>(std::floor(x0)) - 1);
+            sy0 = std::max(sy0, static_cast<int>(std::floor(y0)) - 1);
+            sx1 = std::min(sx1, static_cast<int>(std::ceil(x1)) + 1);
+            sy1 = std::min(sy1, static_cast<int>(std::ceil(y1)) + 1);
+        }
+    }
+    if (sx1 >= sx0 && sy1 >= sy0)
+    {
+        AddPages(write, ctx.frame.psm, GSInternal::framePageBaseToBlock(ctx.frame.fbp), fbw, sx0, sy0, sx1, sy1);
+        AddPages(write, ctx.zbuf.psm, GSInternal::framePageBaseToBlock(ctx.zbuf.zbp), fbw, sx0, sy0, sx1, sy1);
+    }
     if (st.prim.tme)
-        AddPages(read, ctx.tex0.psm, ctx.tex0.tbp0, ctx.tex0.tbw, 0, 0, 2047, 2047);
+    {
+        // whole texture as the wrap modes can address it (same bound as the GPU path when unbounded)
+        const int texW = std::max<int>(st.textureWidth, 1), texH = std::max<int>(st.textureHeight, 1);
+        const uint64_t clamp = ctx.clamp;
+        const uint32_t wrapU = static_cast<uint32_t>(clamp & 3u), wrapV = static_cast<uint32_t>((clamp >> 2) & 3u);
+        const uint32_t minU = static_cast<uint32_t>((clamp >> 4) & 0x3FFu), maxU = static_cast<uint32_t>((clamp >> 14) & 0x3FFu);
+        const uint32_t minV = static_cast<uint32_t>((clamp >> 24) & 0x3FFu), maxV = static_cast<uint32_t>((clamp >> 34) & 0x3FFu);
+        const int u1 = (wrapU >= 2u) ? std::max(texW - 1, static_cast<int>(wrapU == 2u ? maxU : (minU | maxU))) : texW - 1;
+        const int v1 = (wrapV >= 2u) ? std::max(texH - 1, static_cast<int>(wrapV == 2u ? maxV : (minV | maxV))) : texH - 1;
+        AddPages(read, ctx.tex0.psm, ctx.tex0.tbp0, ctx.tex0.tbw, 0, 0, u1, v1);
+    }
 }
 
 void GSHwBackend::SubmitCpuLocked(const GSPrimitiveBatch &batch)
 {
+    if (m_refCacheStale)
+    {
+        m_reference.TextureFlush(); // fast uploads wrote m_vram behind its texture page cache
+        m_refCacheStale = false;
+    }
     if (gpuActive())
     {
         PageSet write, read;
@@ -1024,8 +1246,16 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
     const GSContext &ctx = st.context;
     const GSPrimType type = st.prim.type;
     const bool sprite = type == GS_PRIM_SPRITE;
-    if (!sprite && type != GS_PRIM_TRIANGLE && type != GS_PRIM_TRISTRIP && type != GS_PRIM_TRIFAN)
-        return false;
+    const bool lineOrPoint = type == GS_PRIM_POINT || type == GS_PRIM_LINE || type == GS_PRIM_LINESTRIP;
+    if (!sprite && !lineOrPoint && type != GS_PRIM_TRIANGLE && type != GS_PRIM_TRISTRIP && type != GS_PRIM_TRIFAN)
+        return ++m_stats.cpuWhy[0], false;
+    if (lineOrPoint && st.prim.tme)
+    {
+        // the reference rasterizer draws lines and points untextured (WritePixel with the vertex color)
+        GSPrimitiveBatch flat = batch;
+        flat.state.prim.tme = 0;
+        return SubmitGpuLocked(flat);
+    }
     const uint64_t test = ctx.test;
     const uint32_t ztst = static_cast<uint32_t>((test >> 17) & 3u);
     if (ztst == 0u)
@@ -1035,14 +1265,14 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
     }
     const uint32_t fpsm = ctx.frame.psm, zpsm = ctx.zbuf.psm;
     if (!IsFramePsm(fpsm))
-        return false;
+        return ++m_stats.cpuWhy[1], false;
     if ((test >> 14) & 1u)
         ++m_stats.date; // destination alpha test: not emulated
     const bool zUsed = ztst >= 2u || !ctx.zbuf.zmask;
     if (zUsed && !IsDepthPsm(zpsm))
-        return false;
+        return ++m_stats.cpuWhy[2], false;
     if (st.prim.tme && !ReadFuncFor(ctx.tex0.psm))
-        return false;
+        return ++m_stats.cpuWhy[3], false;
 
     const int ofx = ctx.xyoffset.ofx >> 4, ofy = ctx.xyoffset.ofy >> 4;
     const int texW = std::max<int>(st.textureWidth, 1), texH = std::max<int>(st.textureHeight, 1);
@@ -1104,6 +1334,70 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
         su[0] = std::min(u0f, u1f); su[1] = std::max(u0f, u1f);
         sv[0] = std::min(v0f, v1f); sv[1] = std::max(v0f, v1f);
     }
+    else if (lineOrPoint)
+    {
+        // Lines/points as 1-pixel-wide quads over the integer pixels the reference touches
+        // (Bresenham with both endpoints included; coordinates truncated like GSCpuBackend::DrawLine).
+        const uint32_t n = type == GS_PRIM_POINT ? 1u : 2u;
+        int ix[2], iy[2];
+        HwVertex src[2]{};
+        const uint32_t flat = PackRgba(batch.vertices[n - 1u]);
+        for (uint32_t i = 0; i < n; ++i)
+        {
+            const GSVertex &s = batch.vertices[i];
+            ix[i] = static_cast<int>(s.x) - ofx;
+            iy[i] = static_cast<int>(s.y) - ofy;
+            src[i].z = s.z >= 4294967295.0 ? 0xFFFFFFFFu : static_cast<uint32_t>(std::max(s.z, 0.0));
+            src[i].rgba = st.prim.iip ? PackRgba(s) : flat;
+            src[i].q = 1.0f;
+            src[i].fog = static_cast<float>(s.fog);
+        }
+        if (n == 1u)
+        {
+            ix[1] = ix[0]; iy[1] = iy[0];
+            src[1] = src[0];
+        }
+        bx0 = std::max<int>(std::min(ix[0], ix[1]), ctx.scissor.x0);
+        bx1 = std::min<int>(std::max(ix[0], ix[1]), ctx.scissor.x1);
+        by0 = std::max<int>(std::min(iy[0], iy[1]), ctx.scissor.y0);
+        by1 = std::min<int>(std::max(iy[0], iy[1]), ctx.scissor.y1);
+        if (bx1 < bx0 || by1 < by0)
+        {
+            ++m_stats.skipped; ++m_stats.skipWhy[3];
+            return true;
+        }
+        const bool xMajor = std::abs(ix[1] - ix[0]) >= std::abs(iy[1] - iy[0]);
+        const int a = xMajor ? (ix[0] <= ix[1] ? 0 : 1) : (iy[0] <= iy[1] ? 0 : 1);
+        const int b = 1 - a;
+        auto put = [&](HwVertex &o, const HwVertex &from, float x, float y)
+        {
+            o = from;
+            o.x = x;
+            o.y = y;
+        };
+        const float ax = static_cast<float>(ix[a]), ay = static_cast<float>(iy[a]);
+        const float bx = static_cast<float>(ix[b]), by = static_cast<float>(iy[b]);
+        if (xMajor)
+        {
+            // pixel rows centred on the line: [y, y+1) at each end, x from a to b inclusive
+            put(v[0], src[a], ax, ay);
+            put(v[1], src[b], bx + 1.0f, by);
+            put(v[2], src[a], ax, ay + 1.0f);
+            put(v[3], src[b], bx + 1.0f, by);
+            put(v[4], src[b], bx + 1.0f, by + 1.0f);
+            put(v[5], src[a], ax, ay + 1.0f);
+        }
+        else
+        {
+            put(v[0], src[a], ax, ay);
+            put(v[1], src[a], ax + 1.0f, ay);
+            put(v[2], src[b], bx, by + 1.0f);
+            put(v[3], src[a], ax + 1.0f, ay);
+            put(v[4], src[b], bx + 1.0f, by + 1.0f);
+            put(v[5], src[b], bx, by + 1.0f);
+        }
+        vcount = 6;
+    }
     else
     {
         float fx[3], fy[3];
@@ -1160,6 +1454,7 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
 
     // frame write mask
     uint8_t mask = gs_rhi::MaskRGBA;
+    uint32_t bitMask = 0; // FBMSK bits of partially masked channels (done in the shader against a copy of the target)
     {
         const uint32_t fbmsk = ctx.frame.fbmsk;
         for (int ch = 0; ch < 4; ++ch)
@@ -1169,9 +1464,13 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
                 mask &= static_cast<uint8_t>(~(1u << ch));
             else if (m != 0u)
             {
-                // bit-level mask (texture shuffles): the blender cannot do it; exact on the CPU
+                // bit-level mask (texture shuffles): the blender cannot do it. Without alpha blending
+                // the shader merges (src & ~m) | (dst & m) with a pre-primitive copy of the target;
+                // with blending it stays exact on the CPU.
                 ++m_stats.partialMask;
-                return false;
+                if (st.prim.abe)
+                    return ++m_stats.cpuWhy[4], false;
+                bitMask |= m << (ch * 8);
             }
         }
         if (fpsm == GS_PSM_CT24)
@@ -1276,6 +1575,22 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
     AddPages(framePages, fpsm, fbBlock, fbw, bx0, by0, bx1, by1);
     if (zs)
         AddPages(zPages, zpsm, zBlock, fbw, bx0, by0, bx1, by1);
+
+    // feedback copy surface of a render target (same size/scale; sampled only)
+    auto feedbackOf = [&](Surface *rt) -> Surface *
+    {
+        const uint64_t fk = (static_cast<uint64_t>(rt->base) << 32) | (static_cast<uint64_t>(rt->bw) << 8) | rt->psm;
+        auto &fb = m_feedback[fk];
+        if (!fb)
+        {
+            fb = std::make_unique<Surface>();
+            fb->base = rt->base; fb->bw = rt->bw; fb->psm = rt->psm; fb->width = rt->width; fb->height = rt->height;
+            gs_rhi::SurfaceDesc d = rt->tex->Desc();
+            d.usage = gs_rhi::SurfaceSampled;
+            fb->tex = m_device->CreateSurface(d);
+        }
+        return fb.get();
+    };
 
     // ---- texture source ----
     Surface *source = nullptr;
@@ -1395,16 +1710,7 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
             if (rt == color)
             {
                 // feedback: the GS reads the memory as it was before this primitive
-                const uint64_t fk = (static_cast<uint64_t>(rt->base) << 32) | (static_cast<uint64_t>(rt->bw) << 8) | rt->psm;
-                auto &fb = m_feedback[fk];
-                if (!fb)
-                {
-                    fb = std::make_unique<Surface>();
-                    fb->base = rt->base; fb->bw = rt->bw; fb->psm = rt->psm; fb->width = rt->width; fb->height = rt->height;
-                    gs_rhi::SurfaceDesc d = rt->tex->Desc();
-                    d.usage = gs_rhi::SurfaceSampled;
-                    fb->tex = m_device->CreateSurface(d);
-                }
+                Surface *fb = feedbackOf(rt);
                 FlushBatchLocked();
                 EndPassLocked();
                 const uint32_t sc = m_options.scale;
@@ -1413,7 +1719,7 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
                                static_cast<uint32_t>(std::min<int>(v1r, rt->usedRows - 1) - v0r + 1) * sc};
                 m_device->CopySurface(*fb->tex, r.x, r.y, *rt->tex, r);
                 ++m_stats.feedbackCopies;
-                source = fb.get();
+                source = fb;
             }
             else
                 source = rt;
@@ -1437,10 +1743,29 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
         dc.tex0[0] = source ? t.tbp0 : 0u;
     }
 
+    if (bitMask && source)
+        return ++m_stats.cpuWhy[4], false; // t0 is taken by the texture surface: keep the exact CPU path
+
     // ---- targets current ----
     MakeCurrentLocked(*color, framePages);
     if (zs)
         MakeCurrentLocked(*zs, zPages);
+
+    if (bitMask)
+    {
+        // pre-primitive copy of the covered pixels, read by the shader at SV_Position (bound on t0)
+        Surface *fb = feedbackOf(color);
+        FlushBatchLocked();
+        EndPassLocked();
+        const uint32_t sc = m_options.scale;
+        const gs_rhi::Rect r{static_cast<uint32_t>(bx0) * sc, static_cast<uint32_t>(by0) * sc, static_cast<uint32_t>(bx1 - bx0 + 1) * sc,
+                             static_cast<uint32_t>(by1 - by0 + 1) * sc};
+        m_device->CopySurface(*fb->tex, r.x, r.y, *color->tex, r);
+        ++m_stats.feedbackCopies;
+        source = fb;
+        flags |= F_DSTMASK;
+        dc.src[1] = bitMask;
+    }
 
     dc.xform[0] = 2.0f / static_cast<float>(color->width);
     dc.xform[1] = 2.0f / static_cast<float>(color->height);
@@ -1448,8 +1773,25 @@ bool GSHwBackend::SubmitGpuLocked(const GSPrimitiveBatch &batch)
     dc.xform[3] = zs ? ZMax(zpsm) : 0.0f;
     dc.misc[0] = flags;
     dc.misc[1] = static_cast<uint32_t>(st.fogR) | (static_cast<uint32_t>(st.fogG) << 8) | (static_cast<uint32_t>(st.fogB) << 16);
-    dc.misc[2] = atst | (aref << 4) | (amode << 16);
     dc.misc[3] = blendBits;
+    // texture/TFX/alpha-test state travels per primitive in the vertices (no batch break on change)
+    {
+        const uint32_t w = dc.tex0[2] & 0xFFFFu, h = dc.tex0[2] >> 16; // powers of two (frontend: 1 << min(tw, 10))
+        const uint32_t lw = w ? static_cast<uint32_t>(std::countr_zero(w)) : 0u, lh = h ? static_cast<uint32_t>(std::countr_zero(h)) : 0u;
+        const uint32_t st[4] = {
+            (dc.tex0[1] & 0x3Fu) | (((dc.tex0[1] >> 8) & 0x3Fu) << 6) | (((dc.tex0[1] >> 16) & 0x3Fu) << 12) |
+                (((dc.tex0[1] >> 24) & 1u) << 18) | ((lw & 15u) << 19) | ((lh & 15u) << 23) | ((dc.tex1[1] & 1u) << 27) |
+                (((dc.tex1[1] >> 8) & 3u) << 28),
+            (dc.tex0[3] & 0xFFFFFFu) | (((dc.tex1[1] >> 16) & 0x1Fu) << 24) | (((dc.tex1[2] >> 16) & 1u) << 29) | ((amode & 3u) << 30),
+            (dc.tex1[0] & 0xFFFFFu) | ((atst & 7u) << 20) | ((aref & 0xFFu) << 23),
+            (dc.tex1[2] & 0xFFFFu) | ((flags & 0xFFFFu) << 16)};
+        for (uint32_t i = 0; i < vcount; ++i)
+            std::memcpy(v[i].st, st, sizeof(st));
+        dc.tex0[1] = dc.tex0[2] = dc.tex0[3] = 0u;
+        dc.tex1[0] = dc.tex1[1] = dc.tex1[2] = 0u;
+        dc.misc[0] = 0u;
+        dc.misc[2] = 0u; // 1 = second pass of the alpha test (fail branch), see FlushBatchLocked
+    }
 
     key.color = color;
     key.depth = zs;
@@ -1533,7 +1875,7 @@ void GSHwBackend::FlushBatchLocked()
     if (k.pipeline2)
     {
         DrawConstants c2 = k.constants;
-        c2.misc[2] = (c2.misc[2] & 0xFFFFu) | (2u << 16);
+        c2.misc[2] = 1u; // the shader keeps only the pixels that fail the alpha test
         m_device->SetPipeline(*PipelineLocked(k.pipeline2));
         m_device->SetConstants(&c2, sizeof(c2));
         m_device->Draw(m_vertices.data(), static_cast<uint32_t>(m_vertices.size()));
@@ -1559,10 +1901,59 @@ static void TransferPages(const GSTransferCommand &c, bool source, GSHwBackend::
                  c.trxpos.dsax + w - 1, c.trxpos.dsay + h - 1, full);
 }
 
+void GSHwBackend::FastUploadLocked(const uint8_t *data, uint32_t sizeBytes, uint32_t *blocks)
+{
+    UploadState &u = m_upload;
+    m_stats.uploadBytes += sizeBytes;
+    switch (u.dpsm)
+    {
+#define PS2X_HW_UPLOAD(M, TABLE)                                                                                          \
+    case static_cast<uint32_t>(GSMem::M):                                                                                 \
+        UploadPixels<GSMem::M>(GSMem::TABLE(), m_vram, u.dbp, u.dbw, u.dsax, u.rrw, u.x, u.y, u.copied, u.total, data, sizeBytes, blocks); \
+        break;
+        PS2X_HW_UPLOAD(C32, GetPageTableC32)
+        PS2X_HW_UPLOAD(C24, GetPageTableC32)
+        PS2X_HW_UPLOAD(C16, GetPageTableC16)
+        PS2X_HW_UPLOAD(C16S, GetPageTableC16S)
+        PS2X_HW_UPLOAD(P8, GetPageTableP8)
+        PS2X_HW_UPLOAD(P4, GetPageTableP4)
+        PS2X_HW_UPLOAD(P8H, GetPageTableC32)
+        PS2X_HW_UPLOAD(P4HL, GetPageTableC32)
+        PS2X_HW_UPLOAD(P4HH, GetPageTableC32)
+        PS2X_HW_UPLOAD(Z32, GetPageTableZ32)
+        PS2X_HW_UPLOAD(Z24, GetPageTableZ32)
+        PS2X_HW_UPLOAD(Z16, GetPageTableZ16)
+        PS2X_HW_UPLOAD(Z16S, GetPageTableZ16S)
+#undef PS2X_HW_UPLOAD
+    default:
+        u.copied = u.total; // the reference ignores unknown formats too
+        break;
+    }
+    if (u.copied >= u.total)
+        u.active = false;
+    m_refCacheStale = true;
+}
+
 void GSHwBackend::BeginTransfer(const GSTransferCommand &command)
 {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_transfer = command;
+    m_upload.active = false;
+    if (m_fastUpload && command.direction == 0u && command.trxreg.rrw != 0u && command.trxreg.rrh != 0u)
+    {
+        UploadState &u = m_upload;
+        u.active = true;
+        u.dbp = command.bitbltbuf.dbp;
+        u.dbw = std::max<uint32_t>(command.bitbltbuf.dbw, 1u);
+        u.dpsm = command.bitbltbuf.dpsm;
+        u.dsax = command.trxpos.dsax;
+        u.dsay = command.trxpos.dsay;
+        u.rrw = command.trxreg.rrw;
+        u.x = u.dsax;
+        u.y = u.dsay;
+        u.copied = 0;
+        u.total = static_cast<uint32_t>(command.trxreg.rrw) * static_cast<uint32_t>(command.trxreg.rrh);
+    }
     if (gpuActive() && (command.direction == 1u || command.direction == 2u))
     {
         PageSet src, dst;
@@ -1583,16 +1974,72 @@ void GSHwBackend::BeginTransfer(const GSTransferCommand &command)
 void GSHwBackend::UploadImage(const uint8_t *data, uint32_t sizeBytes)
 {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    const bool fast = m_upload.active && data && sizeBytes != 0u && m_vram;
+    if (m_fastUpload && !fast && m_transfer.direction == 0u)
+        return; // finished or empty transfer: the reference would ignore the data as well
     if (gpuActive() && m_transfer.direction == 0u)
     {
         PageSet dst, full;
         TransferPages(m_transfer, false, dst, &full);
-        PrepareCpuWriteLocked(dst, &full);
-        m_reference.UploadImage(data, sizeBytes);
-        FinishCpuWriteLocked(dst);
+        if (!fast)
+        {
+            PrepareCpuWriteLocked(dst, &full);
+            m_reference.UploadImage(data, sizeBytes);
+            FinishCpuWriteLocked(dst);
+            return;
+        }
+        // Pages written only partly whose newest data is on the GPU: no readback (stall). The owner
+        // writes back on the GPU, the pixels land in m_vram and only the 256-byte blocks written are
+        // patched into the GPU copy; the page stays GPU-newer (a later CPU read reads it back whole).
+        const PageSet partial = dst - full;
+        bool owned = false;
+        partial.forEach([&](uint32_t p) { owned = owned || m_owner[p] != nullptr; });
+        if (owned)
+            partial.forEach([&](uint32_t p)
+                            {
+                                if (m_owner[p])
+                                    WritebackLocked(*m_owner[p]);
+                            });
+        const PageSet patch = partial & m_gpuNewer;
+        const PageSet normal = dst - patch;
+        PrepareCpuWriteLocked(normal, &full);
+        if (!patch.any())
+        {
+            FastUploadLocked(data, sizeBytes, nullptr);
+            FinishCpuWriteLocked(normal);
+            return;
+        }
+        m_patchBlocks.fill(0u);
+        FastUploadLocked(data, sizeBytes, m_patchBlocks.data());
+        FlushBatchLocked(); // the pending batch may sample the old contents
+        EndPassLocked();
+        patch.forEach([&](uint32_t p)
+                      {
+                          uint32_t m = m_patchBlocks[p];
+                          while (m)
+                          {
+                              const uint32_t first = static_cast<uint32_t>(std::countr_zero(m));
+                              uint32_t last = first;
+                              while (last < 31u && ((m >> (last + 1u)) & 1u))
+                                  ++last;
+                              const uint32_t off = p * kPageBytes + first * 256u;
+                              m_device->UpdateBuffer(*m_vramBuffer, off, m_vram + off, (last - first + 1u) * 256u);
+                              m_cpuValid[p] |= m_patchBlocks[p];
+                              m &= ~(((last == 31u) ? 0xFFFFFFFFu : ((1u << (last + 1u)) - 1u)) & ~((1u << first) - 1u));
+                          }
+                      });
+        ++m_stats.patchUploads;
+        BumpPages(patch);
+        FinishCpuWriteLocked(normal);
+        for (auto &t : m_surfaces)
+            if (t->span.intersects(patch))
+                t->stale |= patch & t->span;
         return;
     }
-    m_reference.UploadImage(data, sizeBytes);
+    if (fast)
+        FastUploadLocked(data, sizeBytes, nullptr);
+    else
+        m_reference.UploadImage(data, sizeBytes);
 }
 
 void GSHwBackend::Flush()
@@ -1663,7 +2110,21 @@ void GSHwBackend::SnapshotVram(std::vector<uint8_t> &out) const
     m_reference.SnapshotVram(out);
 }
 
-GSTransferSnapshot GSHwBackend::GetTransferSnapshot() const { return m_reference.GetTransferSnapshot(); }
+GSTransferSnapshot GSHwBackend::GetTransferSnapshot() const
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    GSTransferSnapshot s = m_reference.GetTransferSnapshot();
+    if (m_fastUpload && m_transfer.direction == 0u)
+    {
+        // host->local uploads bypass the reference: report our own progress
+        s.x = m_upload.x;
+        s.y = m_upload.y;
+        s.copiedPixels = m_upload.copied;
+        s.totalPixels = m_upload.active ? m_upload.total : 0u;
+        s.direction = m_upload.active ? 0u : 3u;
+    }
+    return s;
+}
 
 void GSHwBackend::WaitGpuIdle()
 {

@@ -127,7 +127,13 @@ public:
         float s, t, q;
         float fog;
         uint32_t tex; // tbp0 | CLUT slot << 14
+        // Per-primitive state, packed (was in the draw constants: changing it broke the batch):
+        // st[0] = tbw | psm<<6 | cpsm<<12 | csm<<18 | log2 texW<<19 | log2 texH<<23 | tcc<<27 | tfx<<28
+        // st[1] = clampA (wrapU|wrapV<<2|minU<<4|maxU<<14) | csa<<24 | aem<<29 | amode<<30
+        // st[2] = clampB (minV|maxV<<10) | atst<<20 | aref<<23;  st[3] = ta0 | ta1<<8 | flags<<16
+        uint32_t st[4];
     };
+    static_assert(sizeof(HwVertex) == 52, "HwVertex must match VSIn in gs_hw_shaders.h");
 
     // Draw constants (must match cbuffer Draw in gs_hw_shaders.h).
     struct DrawConstants
@@ -253,6 +259,32 @@ private:
     GSTransferCommand m_transfer{};
     uint64_t m_presents = 0;
 
+    // Host->local uploads written straight into m_vram (no per-pixel virtual call/division/lock of
+    // GSCpuBackend::UploadImage); same byte semantics as the reference. Off while PS2X_GS_RECORD is set
+    // (the recorder lives in the reference backend).
+    struct UploadState
+    {
+        bool active = false;
+        uint32_t dbp = 0, dbw = 1, dpsm = 0, dsax = 0, dsay = 0, rrw = 0;
+        uint32_t x = 0, y = 0, copied = 0, total = 0;
+    };
+    UploadState m_upload{};
+    bool m_fastUpload = true;
+    bool m_refCacheStale = false; // m_vram changed behind the reference's texture page cache
+    void FastUploadLocked(const uint8_t *data, uint32_t sizeBytes, uint32_t *blocks);
+    std::array<uint32_t, kPageCount> m_patchBlocks{}; // 256-byte blocks written into GPU-newer pages (patched on the GPU)
+    std::array<uint32_t, kPageCount> m_cpuValid{};    // blocks of GPU-newer pages whose CPU copy is current (patched uploads)
+    // Logical write counter per page (draws, CPU writes): a CLUT load identical to the previous one,
+    // from pages that did not change since, is skipped (the mirror and the reference CLUT already hold it).
+    std::array<uint32_t, kPageCount> m_pageVer{};
+    struct ClutLoadKey
+    {
+        uint64_t a = 0, b = 0, ver = 0;
+        bool valid = false;
+    };
+    ClutLoadKey m_lastClutLoad{};
+    void BumpPages(const PageSet &pages) { pages.forEach([&](uint32_t p) { ++m_pageVer[p]; }); }
+
     struct Stats
     {
         uint64_t gpuPrims = 0, cpuPrims = 0, skipped = 0, batches = 0, twoPass = 0;
@@ -262,6 +294,8 @@ private:
         uint64_t flushKey = 0, flushCoherence = 0;
         uint64_t skipWhy[8]{};
         uint64_t whyTarget = 0, whySource = 0, whyPipeline = 0, whyTex = 0, whyClut = 0, whyOther = 0;
+        uint64_t cpuWhy[6]{}; // CPU fallback: prim type, frame psm, z psm, texture psm, bit mask, other
+        uint64_t uploadBytes = 0, patchUploads = 0, clutNoReadback = 0, clutLoads = 0, clutSkipped = 0;
     };
     mutable Stats m_stats{};
 };

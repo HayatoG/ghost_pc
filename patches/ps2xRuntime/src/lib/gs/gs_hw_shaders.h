@@ -118,11 +118,19 @@ float4 UnpackColor(uint c) { return float4(c & 0xFFu, (c >> 8) & 0xFFu, (c >> 16
 cbuffer Draw : register(b0)
 {
     float4 gXform;   // x 2/W, y 2/H (1x units), z zscale, w zmax
-    uint4 gTex0;     // tbp0, tbw | tpsm<<8 | cpsm<<16 | csm<<24, texW | texH<<16, clampA
-    uint4 gTex1;     // clampB, tcc | tfx<<8 | csa<<16, texa, CLUT slot base (u16 pairs)
-    uint4 gMisc;     // flags, fogcol, atst | aref<<4 | mode<<16, blend: kS | dS<<2 | csel<<4 | fix<<8
-    uint4 gSrc;      // source surface: scale, scaled width, scaled height, psm
+    uint4 cTex0;     // tbp0 of a render-target source (the rest travels in the vertices)
+    uint4 cTex1;     // unused (per primitive, see STATEA/B/C)
+    uint4 cMisc;     // -, fogcol, 1 = alpha-test fail pass, blend: kS | dS<<2 | csel<<4 | fix<<8
+    uint4 gSrc;      // source surface: scale, FBMSK bits (F_DSTMASK), -, psm
 };
+
+// Per-primitive state rebuilt in PSMain from the vertex (same layout the cbuffer used to have):
+// gTex0 = tbp0, tbw | tpsm<<8 | cpsm<<16 | csm<<24, texW | texH<<16, clampA
+// gTex1 = clampB, tcc | tfx<<8 | csa<<16, texa, -
+// gMisc = flags, fogcol, atst | aref<<4 | mode<<16, blend bits
+static uint4 gTex0;
+static uint4 gTex1;
+static uint4 gMisc;
 
 #define F_TME      0x001u
 #define F_STQ      0x002u
@@ -134,6 +142,7 @@ cbuffer Draw : register(b0)
 #define F_BLEND    0x080u
 #define F_FBA      0x100u
 #define F_SRCDEPTH 0x200u
+#define F_DSTMASK  0x400u
 
 Texture2D<float4> gSurf : register(t0);
 ByteAddressBuffer gTex : register(t1);
@@ -146,6 +155,7 @@ struct VSIn
     uint rgba : COLOR;
     float4 stqf : TEXCOORD0; // s, t, q, fog
     uint tex : TEXBASE;      // tbp0 | CLUT slot << 14 (per primitive, so they do not break batches)
+    uint4 sa : STATEA;       // packed per-primitive state (GSHwBackend::HwVertex::st)
 };
 
 struct VSOut
@@ -155,6 +165,7 @@ struct VSOut
     noperspective float3 stq : TEXCOORD0;
     noperspective float fog : TEXCOORD1;
     nointerpolation uint tex : TEXBASE;
+    nointerpolation uint4 sa : STATEA;
 };
 
 static int gSubX = 0; // sub-texel position inside a scale x scale block (render-target sources)
@@ -171,6 +182,7 @@ VSOut VSMain(VSIn v)
     o.stq = v.stqf.xyz;
     o.fog = v.stqf.w;
     o.tex = v.tex;
+    o.sa = v.sa;
     return o;
 }
 
@@ -384,6 +396,15 @@ struct PSOut
 
 PSOut PSMain(VSOut input)
 {
+    uint4 sa = input.sa;
+    gTex0 = uint4(cTex0.x,
+                  (sa.x & 0x3Fu) | (((sa.x >> 6) & 0x3Fu) << 8) | (((sa.x >> 12) & 0x3Fu) << 16) | (((sa.x >> 18) & 1u) << 24),
+                  (1u << ((sa.x >> 19) & 15u)) | ((1u << ((sa.x >> 23) & 15u)) << 16),
+                  sa.y & 0xFFFFFFu);
+    gTex1 = uint4(sa.z & 0xFFFFFu, ((sa.x >> 27) & 1u) | (((sa.x >> 28) & 3u) << 8) | (((sa.y >> 24) & 0x1Fu) << 16),
+                  (sa.w & 0xFFFFu) | (((sa.y >> 29) & 1u) << 16), 0u);
+    uint amodeV = (cMisc.z != 0u) ? 2u : (sa.y >> 30);
+    gMisc = uint4(sa.w >> 16, cMisc.y, ((sa.z >> 20) & 7u) | (((sa.z >> 23) & 0xFFu) << 4) | (amodeV << 16), cMisc.w);
     uint flags = gMisc.x;
     gTbp = input.tex & 0x3FFFu;
     gClutWords = (input.tex >> 14) * 256u;
@@ -466,6 +487,14 @@ PSOut PSMain(VSOut input)
     if ((flags & F_FBA) != 0u)
         outA |= 0x80u;
     o.c0 = float4(cs, (float)outA / 255.0f);
+    if ((flags & F_DSTMASK) != 0u)
+    {
+        // FBMSK with partial channels (no blending): keep the masked bits of the destination, read
+        // from the pre-primitive copy of the target bound on t0 (same size and scale as the target)
+        uint dst = PackColor(gSurf.Load(int3((int)input.pos.x, (int)input.pos.y, 0)));
+        uint src = c.r | (c.g << 8) | (c.b << 16) | (outA << 24);
+        o.c0 = UnpackColor((src & ~gSrc.y) | (dst & gSrc.y));
+    }
     o.c1 = float4(0.0f, 0.0f, 0.0f, saturate(factor));
     o.depth = (gXform.z > 0.0f) ? floor(input.pos.z / gXform.z + 0.5f) * gXform.z : input.pos.z;
     return o;

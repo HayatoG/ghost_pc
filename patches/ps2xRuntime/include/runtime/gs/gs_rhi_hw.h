@@ -126,6 +126,7 @@ namespace gs_rhi
         Float4,
         UInt1,
         UInt2,
+        UInt4,
     };
 
     struct VertexAttribute
