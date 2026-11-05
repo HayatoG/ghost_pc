@@ -143,3 +143,6 @@ O que provavelmente leva a cena a ≥ 35 Hz (por ordem de ganho esperado):
 | Tela parada logo após o idioma | 50,0 Hz (99,99%), 52 FPS no host |
 | Abertura hexagonal (a mais pesada medida) | ~23–24 Hz (46–48%) |
 Perfil da cena hexagonal (agente Opus): `DrawSprite` 53,9%, `DrawTriangle` 40,8%, resto <1,5%.
+
+## Fase 4 (04/11) — cena 3D de gameplay
+Ver `gs-raster-cpu.md`: rasterizador 2,04x mais rápido no stream gravado da gameplay (sprites 2,36x, triângulos 1,91x), saída byte-idêntica; gravador `PS2X_GS_RECORD` e harness `tools/gsreplay`.
