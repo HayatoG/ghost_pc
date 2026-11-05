@@ -19,7 +19,8 @@ render-to-texture, resolução interna escalável e uma RHI pronta para D3D12/Vu
 Variáveis: `PS2X_GS=hw` (GS em thread própria desde 05/11 04:20, seção 5.4; `hw-serial` = na thread do jogo); `PS2X_GS_SCALE=1..8` (resolução interna inteira, padrão 1; limitada pelo orçamento de VRAM);
 `PS2X_GS_WINDOW=0` (janela escondida); `PS2X_GS_VSYNC=1`; `PS2X_GS_DEBUG=1` (camada de debug D3D11);
 `PS2X_GS_FILTER=linear` (apresentação); `PS2X_GS_HW_CPUFRAME=N` (a cada N presents também devolve o quadro composto na CPU
-para a janela do host e para os `shot`; 0 = nunca, só GPU); `PS2X_GS_HW_VERBOSE=1`; `PS2X_POSTFX_CRT=<preset>` aplica o filtro
+para a janela do host e para os `shot`; 0 = nunca, só GPU); `PS2X_GS_HW_VERBOSE=1`; `PS2X_GS_HW_WORKERS=N|auto` (workers do swizzle de upload; ausente/0 = desligado,
+auto = min(4, núcleos/4); 5.5) e `PS2X_GS_HW_PAR_MIN_KB` (limiar, padrão 8); `PS2X_POSTFX_CRT=<preset>` aplica o filtro
 CRT só na janela do renderer (nunca em `shot`/regressão).
 
 ## 2. Desenho
@@ -280,6 +281,70 @@ dispatches/quebras de lote por pipeline): **não feita** por falta de tempo (pra
 04:01 a 04:13); continua na pendência 2. [NAO MEDIDO] `hwbench` (o harness chama o `GSHwBackend` direto, não muda com a
 thread), latência de apresentação com fila cheia, e o par com a máquina parada.
 
+### 5.5 Pool de workers para o swizzle de upload (`PS2X_GS_HW_WORKERS`, 05/11 ~05:40)
+
+Motivo: com o hw na thread de GS (5.4), o lado CPU do backend virou candidato a gargalo e há ~14 threads ociosas.
+Regra da rodada: só paralelizar onde o profile mandar (corte: ≥ 5 % da thread de GS).
+
+Medição antes (replay `scene3d_7501`, 64 presents, exe do gsreplay de 02:35 com os passos 1–10 da 5.3; logs em
+`logs/hwworkers/`, fora do git):
+- `hwprofile` (amostragem da thread que chama o backend = a thread de GS no jogo; só 104 amostras): `FastUploadLocked`
+  19,2 % + `UploadPixels<P8>` 3,9 % = **~23 % da thread** (~33 % do tempo ativo, descontando os 30,8 % em
+  `NtWaitForSingleObject` = espera da GPU). Preparo de vértices (`SubmitGpuLocked` + lambda) ~8,7 %, `LoadClut*` ~2,9 %,
+  `memset`/`memmove` ~3,8 %, `AddPages`/`PageSet` ~5,8 %.
+- `hwuploadcheck`: 12 612 uploads, 47 MB, swizzle rápido **132–143 ms** de ~620 ms do `hwbench` (~22 %). Tamanho médio
+  ~3,7 KiB: **nenhum upload relevante passa de 64 KiB** (com limiar 64 KiB o tempo não mudou: 144–147 ms).
+
+Decisão: (1) **feito** — swizzle de upload em pool; (2) vértices/CLUT **não**: são ~9 % + ~3 % espalhados em código
+dependente da ordem do lote (estado por primitiva, chave de lote, versão de página), sem um laço puro grande para dividir;
+(3) cópias/memcmp grandes **não**: `memset`/`memmove` somam ~4 % e são de vetores pequenos.
+
+Implementação (só `gs_hw_backend.cpp`, sem mudar o header):
+- `HwWorkerPool` (estático, nunca destruído): N threads que dormem numa `condition_variable` (custo zero ocioso, sem
+  busy-wait); `Run(count, fn)` distribui itens por contador atômico e **a própria thread de GS também executa itens**;
+  retorna só quando todos terminaram e nenhum worker segura o job. `PS2X_GS_HW_WORKERS=N` (ausente ou 0 = desligado, ver decisão abaixo; `auto` =
+  min(4, núcleos/4) = 4 nesta máquina de 16 threads); `PS2X_GS_HW_PAR_MIN_KB` (limiar, padrão **8 KiB**). Log
+  `[gs-hw] cpu workers=N (upload swizzle >= K KiB)` uma vez.
+- `UploadPixelsParallel<M>`: divide o trecho do upload em **faixas de linhas de página** (fronteiras em y múltiplo da altura
+  da página do PSM) e chama o mesmo `UploadPixels<M>` por faixa (x/y/copied derivados do índice do pixel; para P4 uma faixa que
+  começa no nibble alto do byte de origem faz esse pixel à parte). Só divide quando é provado que não há aliasing:
+  `dsax + rrw ≤ largura do buffer em pixels` e a última linha de páginas (+1 página de folga do deslocamento de bloco) não
+  passa de 4 MiB; aí pixels distintos caem em palavras distintas e faixas distintas em páginas distintas (os pares de nibble do
+  P4 ficam na mesma faixa). Os bits de bloco escritos (patch na cópia GPU) vão para um array por faixa e são unidos no fim.
+  Caso contrário, ou abaixo do limiar, cai no serial de antes.
+
+Resultados (replay, máquina com 2–6 `ps2EntryRunner` de outros agentes — valores com ±10 %):
+
+| Medida | `WORKERS=0` (serial) | auto (4) + limiar 8 KiB |
+|---|---|---|
+| `hwuploadcheck scene3d_7501`, swizzle rápido | 132–143 ms | **72–108 ms** (limiar 4 KiB: 77–82; 2 KiB: 84–93; 16 KiB: 115–123; 64 KiB: 144–147) |
+| `hwbench scene3d_7501 1 3` | 9,69 / 9,90 ms/present | **9,18 / 9,09** (−6 %) |
+| `hwuploadcheck`, `bytes_different` | 0 nas 5 gravações | **0 nas 5 gravações** (7501, 7536_cur, 7558, 7570, 7628_new) |
+
+Qualidade: `hwcompare` de `scene3d_7570` e `scene3d_7628_new` com `WORKERS=0` e `WORKERS=4` (limiar 8 KiB) dá **saída
+textual idêntica** (mesmo md5; buffer principal 0xA0 do 7570 = 36,17 dB, igual à 5.3).
+
+No jogo (exe `build_perf` de 05/11 05:43 copiado para `work/hwwork_exe`, limiar 8 KiB; `regress_scene3d.txt`,
+`PS2X_GS=hw` (thread de GS), `PS2X_PAD_CLOCK=guest`, `PS2X_TARGET_FPS=0`, `PS2X_GS_WINDOW=0`; cada par rodou **em paralelo**,
+mesmo exe, só `PS2X_GS_HW_WORKERS` diferente, com 2–5 `ps2EntryRunner` de outros agentes; janela 7530→7610 porque os CSVs
+terminam em 7615–7625; logs `logs/hwworkers/`):
+
+| Par | `CPUFRAME` | `WORKERS=0` | `WORKERS=4` |
+|---|---|---|---|
+| 1 (05:43) | 1 (com `shot`) | 23,97 vsync/s | 23,29 vsync/s (−2,8 %) |
+| 2 (05:46) | 0 | 18,39 vsync/s | 17,95 vsync/s (−2,4 %) |
+
+(Os absolutos variam 18–24 entre pares por causa da carga dos outros agentes; vale a razão dentro do par.)
+Regressão: os 6 `shot` do par 1 são **byte-idênticos entre WORKERS=0 e 4** (mesmo md5) e dão o PSNR de sempre contra
+`logs/final/shots_baseline_cpu`: q07300 71,70; q07500 73,56; q07564 40,79; q07628 36,98; q07692 36,48; q07700 36,92 dB.
+
+**Conclusão e decisão (05:50):** o pool acelera o swizzle (−25 a −45 % no upload, −6 % no replay inteiro), mas **no jogo não há
+ganho**: a thread de GS não é o limite hoje (o ritmo vem de guest/VU1/EE, seriais), e no par paralelo os 4 workers extras
+competem pela CPU com o resto (−2,5 %, na margem de ruído mas igual nos dois pares). Por isso **o padrão ficou desligado**
+(`PS2X_GS_HW_WORKERS` ausente = 0); `PS2X_GS_HW_WORKERS=auto` (= min(4, núcleos/4)) ou `=N` liga. Reavaliar quando a thread de
+GS virar gargalo (escala interna ≥ 2, cenas com mais upload, ou depois de acelerar VU1/EE). [NAO MEDIDO] par com a máquina
+parada; perfil da thread de GS no jogo (o percentual acima é da thread do replay).
+
 ## 6. O que foi estudado do PCSX2 (regra 8)
 
 Rodada de otimização (5.3): nenhuma consulta à rede; as ideias (estado por primitiva para não quebrar lotes, FBMSK de bits
@@ -315,7 +380,8 @@ memória local na GPU (write-back por compute), herdada do backend ROV.
 3. FBMSK de bits **com blend** e com textura vinda de outro alvo, DATE e PABE: ainda CPU/ignorados (FBMSK sem blend: GPU, 5.3).
 4. Laço da janela (`ps2_runtime.cpp`) com `PS2X_TARGET_FPS=0`: reapresentar só quando houver quadro novo (esperar evento) sem
    mudar o ritmo do guest nem o relógio do pad; não é arquivo deste backend.
-5. Upload: ainda ~1,9 ns/byte na CPU (P8 domina). Próximo degrau: swizzle por bloco de 256 B (cópia de colunas, como o
+5. Upload: ainda ~1,9 ns/byte na CPU (P8 domina); desde a 5.5 há opção (`PS2X_GS_HW_WORKERS=auto`, desligada por padrão) de dividir os uploads ≥ 8 KiB entre 4 workers (o resto,
+   uploads pequenos e de uma linha de página só, segue serial). Próximo degrau: swizzle por bloco de 256 B (cópia de colunas, como o
    GSLocalMemory do PCSX2) ou upload linear + compute com CLUT na GPU.
 6. `Present` da janela e contenção do `m_mutex`: resolvido pela thread de GS (5.4; um só chamador). Pendente: com a fila de
    32 MiB o `Present` da janela do host espera o backlog drenar (latência de exibição, não ritmo do guest); medir e, se
