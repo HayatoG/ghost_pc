@@ -16,7 +16,7 @@ render-to-texture, resolução interna escalável e uma RHI pronta para D3D12/Vu
 | `gs_backend_factory.cpp`, `CMakeLists.txt` | `PS2X_GS=hw` e as duas fontes novas (`PS2X_HW_POSTFX=1` só em `gs_hw_backend.cpp`) |
 | `ghost_pc/tools/gsreplay/hw_tools.cpp` (+ `gsreplay.h`, `build.cmd`) | harness headless: `hwcompare`, `hwbench`, `hwfirst`, `hwdraws`, `hwstats`, `hwprofile` |
 
-Variáveis: `PS2X_GS=hw`; `PS2X_GS_SCALE=1..8` (resolução interna inteira, padrão 1; limitada pelo orçamento de VRAM);
+Variáveis: `PS2X_GS=hw` (GS em thread própria desde 05/11 04:20, seção 5.4; `hw-serial` = na thread do jogo); `PS2X_GS_SCALE=1..8` (resolução interna inteira, padrão 1; limitada pelo orçamento de VRAM);
 `PS2X_GS_WINDOW=0` (janela escondida); `PS2X_GS_VSYNC=1`; `PS2X_GS_DEBUG=1` (camada de debug D3D11);
 `PS2X_GS_FILTER=linear` (apresentação); `PS2X_GS_HW_CPUFRAME=N` (a cada N presents também devolve o quadro composto na CPU
 para a janela do host e para os `shot`; 0 = nunca, só GPU); `PS2X_GS_HW_VERBOSE=1`; `PS2X_POSTFX_CRT=<preset>` aplica o filtro
@@ -260,7 +260,25 @@ Implementação (só `gs_backend_factory.cpp`): `PS2X_GS=hw-thread` = o mesmo `G
 - O MXCSR do produtor viaja com cada `Submit` (como em `cpu-thread`).
 - O `m_mutex` recursivo do `GSHwBackend` continua (agora sem disputa: um só chamador).
 
-Resultados: ver tabela abaixo (preenchida na medição desta rodada).
+Resultados no jogo (exe `build_perf` de 05/11 04:13 copiado para `work/hwthr_exe`; `regress_scene3d.txt`, `PS2X_GS_WINDOW=0`,
+`PS2X_TARGET_FPS=0`; script `hwthread_measure.sh` no scratchpad da sessão; logs em `logs/hwthread/`). Cada par rodou **em
+paralelo** (hw e hw-thread ao mesmo tempo, mesma carga) com mais 2-4 `ps2EntryRunner` de outros agentes na máquina: os valores
+absolutos estão deprimidos; vale a razão. Janela 7530→7620 (o CSV do hw-thread termina em 7622-7639, antes do `quit`):
+
+| Par | `PS2X_GS_HW_CPUFRAME` | `hw` (thread do jogo) | `hw-thread` | ganho |
+|---|---|---|---|---|
+| 1 (04:14) | 1 (com `shot`) | 17,51 vsync/s | **20,71** | +18 % |
+| 2 (04:17) | 0 | 17,98 vsync/s | **21,99** | +22 % |
+
+Correção: os 6 `shot` do par 1 são **byte-idênticos entre hw e hw-thread** (mesmo md5) e dão o mesmo PSNR de antes contra
+`logs/final/shots_baseline_cpu`: q07300 71,70; q07500 73,56; q07564 40,79; q07628 36,98; q07692 36,48; q07700 36,92 dB.
+Sem travamento nem erro nas 4 corridas (e num teste rápido de 25 s depois da troca do padrão).
+
+**Decisão (04:20): `PS2X_GS=hw` passou a ser o modo em thread própria** (`hw-thread` é sinônimo); o modo antigo, na thread
+do jogo, fica em `PS2X_GS=hw-serial` (para medir/bisectar). Frente (B) desta rodada (fundir passes, agrupar cópias, cortar
+dispatches/quebras de lote por pipeline): **não feita** por falta de tempo (prazo 04:35, build bloqueado por outro agente de
+04:01 a 04:13); continua na pendência 2. [NAO MEDIDO] `hwbench` (o harness chama o `GSHwBackend` direto, não muda com a
+thread), latência de apresentação com fila cheia, e o par com a máquina parada.
 
 ## 6. O que foi estudado do PCSX2 (regra 8)
 
@@ -299,7 +317,9 @@ memória local na GPU (write-back por compute), herdada do backend ROV.
    mudar o ritmo do guest nem o relógio do pad; não é arquivo deste backend.
 5. Upload: ainda ~1,9 ns/byte na CPU (P8 domina). Próximo degrau: swizzle por bloco de 256 B (cópia de colunas, como o
    GSLocalMemory do PCSX2) ou upload linear + compute com CLUT na GPU.
-6. `Present` da janela e contenção do `m_mutex` (recursivo) com a thread da janela: não medido nesta rodada.
+6. `Present` da janela e contenção do `m_mutex`: resolvido pela thread de GS (5.4; um só chamador). Pendente: com a fila de
+   32 MiB o `Present` da janela do host espera o backlog drenar (latência de exibição, não ritmo do guest); medir e, se
+   preciso, `PS2X_GS_QUEUE_KB=8192`. Também falta passar o oráculo `PS2X_GUEST_CLOCK_ONLY` + `PS2X_GS_STREAM_HASH` com o hw.
 7. Composição PMODE com dois circuitos na GPU (hoje: um circuito direto; com `PS2X_GS_HW_CPUFRAME` o host recebe o quadro da CPU).
 8. Back-ends D3D12/Vulkan da `gs_rhi_hw.h` (seção 3) e substituição de texturas por hash (o caminho de textura passa por um ponto
    único — `FetchTexel`/página da cópia GPU — onde um cache por conteúdo pode ser inserido).
