@@ -2,7 +2,7 @@
 
 > **Estudo de caso / Case study.** PT-BR: projeto de estudo pessoal; o desenvolvimento só continua no meu tempo disponível, quando possível (sem prazos nem garantia de conclusão). EN: personal case study; development only continues in my available time, when possible (no deadlines, no guarantee of completion). Ver/see `README.md`.
 
-> Orientação técnica do projeto, **não é aconselhamento jurídico**. Complementa `../../docs/LEGAL.md` (base). Repositório **privado** até segunda ordem (regra 3).
+> Orientação técnica do projeto, **não é aconselhamento jurídico**. Complementa `../../docs/LEGAL.md` (base). Repositório **público** desde 24/11/2026 por decisão do usuário (regra 3).
 
 ## Licença do código
 - Este repositório usa **GPL-3.0** (`LICENSE`), porque os patches (`patches/ps2xRuntime-modified.patch`) e os arquivos novos em `patches/ps2xRuntime/` são derivados do PS2Recomp (GPL-3.0).
