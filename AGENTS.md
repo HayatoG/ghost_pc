@@ -1,5 +1,7 @@
 # ghost_pc — Ghost in the Shell: Stand Alone Complex (PS2, Europa)
 
+> **Estudo de caso / Case study:** o projeto é só um estudo de caso, desenvolvido no tempo disponível do autor, quando possível. Manter o aviso bilíngue (PT-BR/EN) no topo do `README.md` e dos docs principais. / The project is only a case study, developed in the author's available time, when possible. Keep the bilingual notice at the top of `README.md` and the main docs.
+
 Tudo que é **específico deste jogo** mora aqui. Ferramentas e regras genéricas ficam na raiz (`../AGENTS.md`, `../tools/`, `../docs/`) e valem também neste diretório. Leia a raiz primeiro.
 
 ## Alvo

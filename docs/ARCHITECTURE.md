@@ -1,5 +1,7 @@
 # Architecture — Ghost in the Shell: Stand Alone Complex (ghost_pc)
 
+> **Estudo de caso / Case study.** PT-BR: projeto de estudo pessoal; o desenvolvimento só continua no meu tempo disponível, quando possível (sem prazos nem garantia de conclusão). EN: personal case study; development only continues in my available time, when possible (no deadlines, no guarantee of completion). Ver/see `README.md`.
+
 Complementa `../../docs/ARCHITECTURE.md` (base genérica). Aqui só o que é específico deste jogo.
 
 ## Identidade

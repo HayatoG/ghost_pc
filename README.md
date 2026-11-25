@@ -1,5 +1,11 @@
 # ghost_pc — Ghost in the Shell: Stand Alone Complex (PS2) → PC
 
+> **Estudo de caso / Case study**
+>
+> **PT-BR:** este projeto é apenas um estudo de caso, uma pesquisa pessoal sobre recompilação estática e engenharia reversa, e não um produto. O desenvolvimento só continuará no meu tempo disponível, quando possível: sem prazos, sem garantia de conclusão e sem suporte.
+>
+> **EN:** this project is only a case study, personal research into static recompilation and reverse engineering, not a product. Development will only continue in my available time, when possible: no deadlines, no guarantee of completion and no support.
+
 Port do jogo (PS2, versão Europa `SLES_530.20`) por recompilação estática. Repositório do jogo; a base genérica está em **ps2_recomp** (`HayatoG/ps2_recomp`).
 
 > **Privado e sem conteúdo do jogo.** Nada de ISO, ELF, texturas, áudio ou vídeo: só código, patches, notas de engenharia reversa (endereços, nomes, formatos) e scripts. É preciso o **dump original** (`*.iso` nesta pasta); o launcher confere serial e sha256 do ELF de boot.

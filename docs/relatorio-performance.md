@@ -1,5 +1,7 @@
 # Relatório de desempenho: antes e depois
 
+> **Estudo de caso / Case study.** PT-BR: projeto de estudo pessoal; o desenvolvimento só continua no meu tempo disponível, quando possível (sem prazos nem garantia de conclusão). EN: personal case study; development only continues in my available time, when possible (no deadlines, no guarantee of completion). Ver/see `README.md`.
+
 Medição final de 05/11/2026. Os números e as fontes de cada gráfico estão em [`perf/data.json`](perf/data.json); os gráficos são regenerados por `tools\make_report.ps1` (ver o fim deste arquivo). Nenhum byte, imagem ou captura do jogo entra aqui: só números, nomes e código nossos. O que ainda não foi medido segue marcado **[PENDENTE]**.
 
 ## 1. Resumo executivo
